@@ -26,19 +26,27 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 def home():
     return "✅ Al Aqsa Computer Master Automation & Full System is Running Live!"
 
-# 1. Facebook Webhook Verification
-@app.route("/webhook", methods=["GET"])
+# 1. Facebook Webhook Verification & Request Logger (এখানে নতুন কোডটি বসাবেন)
+@app.route("/webhook", methods=["GET", "POST"])
 def verify_webhook():
-    mode = request.args.get("hub.mode")
-    token = request.args.get("hub.verify_token")
-    challenge = request.args.get("hub.challenge")
+    print("🔔 WEBHOOK HIT! Request Method:", request.method)
+    print("Query Parameters:", request.args)
+    
+    if request.method == "GET":
+        mode = request.args.get("hub.mode")
+        token = request.args.get("hub.verify_token")
+        challenge = request.args.get("hub.challenge")
 
-    if mode and token:
-        if mode == "subscribe" and token == VERIFY_TOKEN:
-            return challenge, 200
-        else:
-            return "Verification failed", 403
-    return "Hello World", 200
+        if mode and token:
+            if mode == "subscribe" and token == VERIFY_TOKEN:
+                return challenge, 200
+            else:
+                return "Verification failed", 403
+        return "Hello World", 200
+        
+    elif request.method == "POST":
+        print("Incoming POST Data:", request.json)
+        return "EVENT_RECEIVED", 200
 
 # 2. Handle Incoming Facebook Messenger & Comments Webhook
 @app.route("/webhook", methods=["POST"])
