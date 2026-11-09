@@ -6,7 +6,6 @@ gunicorn==21.2.0
 python-dotenv==1.0.1
 oauth2client==4.1.3
 gspread==6.0.2
-pandas==2.2.1
 gTTS==2.5.1
 moviepy==1.0.3
 reportlab==4.1.0
