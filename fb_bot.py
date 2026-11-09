@@ -83,7 +83,7 @@ def handle_webhook():
                         if not ai_brain.has_chatted_before(commenter_id):
                             # Trigger Proactive Inbox Outreach
                             outreach_msg = (
-                                f"আসসালামু আলাইকুম {commenter_name} ভাইয়া! আল আকসা কম্পিউটার পেজে আপনার কমেন্টটি দেখলাম। "
+                                f"আসসালামু আলাইকুম {commenter_name} ভাইয়া! আল আকসা কম্পিউটার পেজে আপনার কমেন্টটি দেখলাম। "
                                 f"আমাদের কম্পিউটার অফিস অ্যাপ্লিকেশন, গ্রাফিক ডিজাইন, ফ্রিল্যান্সিং ও সরকারি ফ্রি কোর্সে (১০,০০০+ টাকা ভাতা) ভর্তি চলছে। "
                                 f"আপনি কোন কোর্সটি সম্পর্কে জানতে চান?"
                             )
@@ -91,9 +91,19 @@ def handle_webhook():
 
     return "EVENT_RECEIVED", 200
 
+def get_facebook_user_name(sender_id):
+    """Fetch the real Facebook name of the user using Facebook Graph API to personalize AI responses."""
+    try:
+        url = f"https://graph.facebook.com/v18.0/{sender_id}?fields=first_name,last_name,name&access_token={PAGE_ACCESS_TOKEN}"
+        res = requests.get(url).json()
+        return res.get("name", "Student")
+    except:
+        return "Student"
+
 def process_facebook_text(sender_id, text):
-    """Process customer text through Gemini AI Brain and send reply"""
-    customer_name = "Student"
+    """Process customer text through Gemini AI Brain and send personalized reply."""
+    # Fetch real Facebook user name for personalization
+    customer_name = get_facebook_user_name(sender_id)
     
     # Pass message to AI Brain
     result = ai_brain.handle_message(sender_id, text, customer_name)
@@ -106,13 +116,13 @@ def process_facebook_text(sender_id, text):
     lower_t = text.lower()
     if any(w in lower_t for w in ['konfirm', 'konfirme', 'admission', 'vorti', 'vortibo', 'কনফার্ম', 'ভর্তি']):
         state = ai_brain.get_user_state(sender_id)
-        pass_image_path = generate_digital_pass(customer_name, state["course"])
-        send_facebook_image_file(sender_id, pass_image_path, caption="🎟️ আপনার নামে আল আকসা কম্পিউটারের ডিজিটাল ভিআইপি টোকেন/গেট-পাস ইস্যু করা হলো! অফিসে আসার সময় এটি দেখিয়ে স্পেশাল ছাড় ও অগ্রাধিকার পাবেন।")
+        pass_image_path = generate_digital_pass(customer_name, state.get("course", "Computer Office Application"))
+        send_facebook_image_file(sender_id, pass_image_path, caption=f"🎟️ {customer_name} ভাইয়া, আপনার নামে আল আকসা কম্পিউটারের ডিজিটাল ভিআইপি টোকেন/গেট-পাস ইস্যু করা হলো! অফিসে আসার সময় এটি দেখিয়ে স্পেশাল ছাড় ও অগ্রাধিকার পাবেন।")
 
     # If user gave phone during bargaining, send Telegram Alert to Sir with 15-min timer
     if result.get("alert_admin") and result.get("alert_type") == "BARGAIN_LEAD":
-        send_telegram_bargain_alert(sender_id, result["phone"], result["course"], result["final_fee"])
-        threading.Thread(target=auto_followup_timer, args=(sender_id, result["final_fee"])).start()
+        send_telegram_bargain_alert(sender_id, result.get("phone", "N/A"), result.get("course", "General"), result.get("final_fee", "3500"))
+        threading.Thread(target=auto_followup_timer, args=(sender_id, result.get("final_fee", "3500"))).start()
 
 def process_facebook_audio(sender_id, audio_url):
     """Download customer voice note and process with Gemini AI"""
@@ -121,7 +131,7 @@ def process_facebook_audio(sender_id, audio_url):
         result = ai_brain.handle_voice_message(sender_id, audio_data, mime_type="audio/mp4")
         send_facebook_message(sender_id, result["reply"])
     except Exception as e:
-        send_facebook_message(sender_id, "ভাইয়া, আপনার ভয়েস নোটটি প্রসেস করতে সমস্যা হয়েছে। অনুগ্রহ করে লিখে দিন!")
+        send_facebook_message(sender_id, "ভাইয়া, আপনার ভয়েস নোটটি প্রসেস করতে সমস্যা হয়েছে। অনুগ্রহ করে লিখে দিন!")
 
 def process_facebook_image(sender_id, image_url):
     """Download payment screenshot and verify with Gemini Vision OCR"""
@@ -131,11 +141,11 @@ def process_facebook_image(sender_id, image_url):
         
         send_facebook_message(
             sender_id, 
-            "অসংখ্য ধন্যবাদ! আপনার পেমেন্টের স্ক্রিনশটটি আমরা যাচাইয়ের জন্য বাদশাহ স্যারের কাছে পাঠিয়ে দিয়েছি। স্যার চেক করলেই সিট কনফার্মেশন মেসেজ পেয়ে যাবেন!"
+            "অসংখ্য ধন্যবাদ! আপনার পেমেন্টের স্ক্রিনশটটি আমরা যাচাইয়ের জন্য বাদশাহ স্যারের কাছে পাঠিয়ে দিয়েছি। স্যার চেক করলেই সিট কনফার্মেশন মেসেজ পেয়ে যাবেন!"
         )
         send_telegram_photo_to_admin(sender_id, image_url, ocr_result)
     except Exception as e:
-        send_facebook_message(sender_id, "ছবিটি প্রসেস করতে সমস্যা হয়েছে। দয়া করে আবার পাঠান।")
+        send_facebook_message(sender_id, "ছবিটি প্রসেস করতে সমস্যা হয়েছে। দয়া করে আবার পাঠান।")
 
 def generate_digital_pass(student_name, course_name):
     """Generate a dynamic Digital VIP Token / Admit Pass image for the student"""
@@ -194,7 +204,7 @@ def auto_followup_timer(customer_id, final_fee):
     state = ai_brain.get_user_state(customer_id)
     if "Waiting for Sir" in str(state.get("status", "")):
         ai_brain.sync_to_crm(customer_id, status="Auto-Approved after 15 mins", offered_fee=str(final_fee))
-        auto_msg = f"আসসালামু আলাইকুম ভাইয়া! বাদশাহ স্যারের সাথে কথা হয়েছে। আপনার প্রবল শেখার আগ্রহের কারণে স্যার বিশেষ বিবেচনায় আপনার কোর্স ফি সর্বশেষ **{final_fee} টাকা** রাখার অনুমতি দিয়েছেন!"
+        auto_msg = f"আসসালামু আলাইকুম ভাইয়া! বাদশাহ স্যারের সাথে কথা হয়েছে। আপনার প্রবল শেখার আগ্রহের কারণে স্যার বিশেষ বিবেচনায় আপনার কোর্স ফি সর্বশেষ **{final_fee} টাকা** রাখার অনুমতি দিয়েছেন!"
         send_facebook_message(customer_id, auto_msg)
 
 if __name__ == "__main__":
