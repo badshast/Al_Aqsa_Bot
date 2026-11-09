@@ -1,0 +1,92 @@
+{
+  "institute": "Al Aqsa Computer & Matamuhuri Trade & Supply Ltd.",
+  "director": "Mohammad Badsha Mia",
+  "location": "Notun Bus Terminal (Lama-Alikadam Counter Pashe), 2nd Floor, Old Commerce College, Chakaria, Cox's Bazar",
+  "contact": {
+    "whatsapp": "01832465790",
+    "primary_call": "01725259074",
+    "emergency": "01777105390",
+    "bkash_payment": "01777109390",
+    "nagad": "01725259074"
+  },
+  "govt_free_courses": {
+    "duration": "3 Months",
+    "age_limit": "18-45 Years",
+    "registration_fee": 1500,
+    "form_fee": 100,
+    "total_initial_fee": 1600,
+    "refundable_amount": 1500,
+    "stipend": "10,000+ BDT",
+    "master_key_course": "Skill Development (Industrial Bakery, Chef & Food Production)",
+    "other_free_courses": [
+      "Computer Office Application",
+      "Professional Graphic Design",
+      "Tailoring & Dress Making"
+    ],
+    "unlocked_future_courses": [
+      "Driving Training",
+      "Japanese Language",
+      "Spoken English"
+    ]
+  },
+  "paid_courses": [
+    {
+      "id": "computer",
+      "name": "Computer Office Application",
+      "duration": "3 or 6 Months",
+      "regular_fee": 5000,
+      "step1_fee": 4500,
+      "step2_fee": 4000,
+      "bottom_fee": 3500,
+      "negotiable": true
+    },
+    {
+      "id": "graphics",
+      "name": "Professional Graphic Design",
+      "duration": "3 or 6 Months",
+      "regular_fee": 6500,
+      "step1_fee": 5500,
+      "step2_fee": 5000,
+      "bottom_fee": 4500,
+      "negotiable": true
+    },
+    {
+      "id": "tailoring",
+      "name": "Tailoring & Dress Making",
+      "duration": "3 Months",
+      "regular_fee": 4500,
+      "step1_fee": 3500,
+      "step2_fee": 3200,
+      "bottom_fee": 3000,
+      "negotiable": true
+    },
+    {
+      "id": "freelancing",
+      "name": "Professional Freelancing & Outsourcing",
+      "sub_courses": [
+        "Graphic Design for Freelancing",
+        "Digital Marketing",
+        "Website Design & Development",
+        "Ethical Hacking"
+      ],
+      "duration": "6 Months",
+      "regular_fee": 15000,
+      "step1_fee": 14000,
+      "step2_fee": 13000,
+      "bottom_fee": 12500,
+      "negotiable": true,
+      "special_condition": "After completing the course, the institute provides live orders. Profit sharing: Student gets 2/3 (2 parts) and Institute/Sir gets 1/3 (1 part)."
+    },
+    {
+      "id": "forex",
+      "name": "Forex Trading Special Course",
+      "duration": "3 Months",
+      "regular_fee": 15000,
+      "step1_fee": 15000,
+      "step2_fee": 15000,
+      "bottom_fee": 15000,
+      "negotiable": false,
+      "special_condition": "15,000 BDT is 100% Fixed. Requires $1,000 USD investment for live trading (can be invested after completing the course). Can be taken simultaneously with Govt Free Courses. Profit sharing: Sir gets 1/3 (1 part) and Student gets 2/3 (2 parts)."
+    }
+  ]
+}

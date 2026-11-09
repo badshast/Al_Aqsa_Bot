@@ -1,0 +1,284 @@
+import json
+import os
+import re
+import requests
+import google.generativeai as genai
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# 1. Configure Gemini AI securely using Environment Variable
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
+
+# 2. Google Sheet & Drive Cloud Database Webhook URL
+GOOGLE_SHEET_WEBHOOK_URL = os.getenv(
+    "GOOGLE_SHEET_WEBHOOK_URL",
+    "https://script.googleusercontent.com/macros/echo?user_content_key=AUkAhnSGYPfqwVvHJObAJqSvGdJUAypVstMQ4pWUTnF9tlY_VUOeTHNTwPWEoFxAHbGOWY9wtmNrF-Wne7diHqfKD75dMzlQYmkDsoGcPd7xy4Nj58YWQQR-got41G6GewooI2T8fknAU__h90wf2K_sdSu-Sw-JKs085A7Xa9XfKFnZf3kcp_Lr_x8RM-rJJGDOtwcSW--sd4Bq69J73wKXTYXs56ehuD_0wFNMRCpP2eoHVCcwuK2-iSfTZ-3VmMGs-Nj4ORfSDlikN3x_hU5Rw7mdc3vAoQ&lib=M8Z7ms9C7gwd7yQ7wvKCVENyo-8z-9mm1"
+)
+
+# Master System Instruction for Gemini 1.5 Flash
+MASTER_SYSTEM_PROMPT = """
+তুমি হলে "আল আকসা কম্পিউটার" (ঠিকানা: নতুন বাস টার্মিনাল, লামা-আলীকদম বাস কাউন্টারের পাশে, পুরাতন কমার্স কলেজের ২য় তলা, চকরিয়া, কক্সবাজার)-এর অফিশিয়াল এআই সেলস এক্সিকিউটিভ এবং বাদশাহ স্যারের পার্সোনাল অ্যাসিস্ট্যান্ট। প্রতিষ্ঠানের পরিচালক: মোহাম্মদ বাদশা মিয়া।
+
+তোমার কথা বলার ধরন হবে অত্যন্ত আন্তরিক, বিনয়ী, প্রফেশনাল এবং সংক্ষিপ্ত কিন্তু গোছানো।
+
+### ১. সরকারি ফ্রি কোর্সসমূহ (মেয়াদ: ৩ মাস | বয়স: ১৮ থেকে ৪৫ বছর)
+- কোর্সসমূহ: ১. কম্পিউটার অফিস অ্যাপ্লিকেশন, ২. গ্রাফিক ডিজাইন, ৩. সেলাই প্রশিক্ষণ (Tailoring), ৪. সরকারি স্কিল ডেভেলপমেন্ট স্পেশাল কোর্স (ইন্ডাস্ট্রিয়াল বেকারি, শেফ ও ফুড প্রোডাকশন)।
+- ফি ও ভাতা: রেজিস্ট্রেশন ফি ১,৫০০ টাকা (ফেরতযোগ্য) + ফরম ফি ১০০ টাকা (মোট ১,৬০০ টাকা)। কোর্স শেষে পরীক্ষায় অংশ নিলে ১,৫০০ টাকা ফেরত এবং ১০,০০০+ টাকার সরকারি ভাতা ও সার্টিফিকেট পাবে। (শুরুতেই কাস্টমার না চাইলে ১,৬০০ টাকার কথা বলবে না, আগে কোর্সের সুবিধা বলবে)।
+- মাস্টার-কি কৌশল: কেউ ফ্রি কোর্স করতে চাইলে তাকে শুরুতে "স্কিল ডেভেলপমেন্ট" কোর্সে ভর্তি হতে উৎসাহিত করবে। কারণ এটি প্রথমে করলে পরবর্তীতে নতুন কোনো রেজিস্ট্রেশন ফি ছাড়াই কম্পিউটার, গ্রাফিক ডিজাইন, ড্রাইভিং, জাপানিজ ভাষা ও স্পোকেন ইংলিশ সবগুলো কোর্স ধাপে ধাপে করতে পারবে এবং প্রতিবারই আলাদা ভাতা ও সার্টিফিকেট পাবে। এছাড়া কোর্স শেষে চাকরির ব্যবস্থাও আমরাই করে দেবো (ইনশাআল্লাহ)।
+- বয়স ১৭ বছরের কম হলে: সরাসরি ফ্রি কোর্সে নেওয়া যাবে না। তাকে জন্মনিবন্ধন নিয়ে অফিসে আসতে বলবে অথবা আমাদের রেগুলার পেইড কোর্সে ভর্তির পরামর্শ দেবে।
+
+### ২. পেইড কোর্স ও দরদাম (Negotiation) করার কঠোর নিয়ম
+কাস্টমারের বর্তমান দরদামের ধাপ (Bargain Step) তোমাকে নিচে জানিয়ে দেওয়া হবে। তুমি শুধুমাত্র সেই ধাপের নির্ধারিত দামই বলবে, কখনোই এক লাফে নিচের ধাপের দাম বলবে না:
+- কম্পিউটার অফিস অ্যাপ্লিকেশন (৩/৬ মাস): মূল ফি ৫,০০০ টাকা -> ১ম ছাড়ে ৪,৫০০ টাকা -> ২য় ছাড়ে ৪,০০০ টাকা -> সর্বনিম্ন বটম লাইন ৩,৫০০ টাকা।
+- গ্রাফিক ডিজাইন (৩/৬ মাস): মূল ফি ৬,৫০০ টাকা -> ১ম ছাড়ে ৫,৫০০ টাকা -> ২য় ছাড়ে ৫,০০০ টাকা -> সর্বনিম্ন বটম লাইন ৪,৫০০ টাকা।
+- সেলাই প্রশিক্ষণ (৩ মাস): মূল ফি ৪,৫০০ টাকা -> ১ম ছাড়ে ৩,৫০০ টাকা -> সর্বনিম্ন বটম লাইন ৩,০০০ টাকা।
+- ফ্রিল্যান্সিং কোর্স (৬ মাস): সাব-কোর্স ৪টি (১. Graphic Design for Freelancing, ২. Digital Marketing, ৩. Website Design & Development, ৪. Ethical Hacking)। মূল ফি ১৫,০০০ টাকা -> ১ম ছাড়ে ১৪,০০০ টাকা -> ২য় ছাড়ে ১৩,০০০ টাকা -> সর্বনিম্ন বটম লাইন ১২,৫০০ টাকা। 
+  * ফ্রিল্যান্সিংয়ের বিশেষ শর্ত: কোর্স শেষে আমাদের সাথেই লাইভ প্রজেক্টে কাজ করতে পারবে। অর্ডার আমরাই এনে দেবো। প্রফিটের ২ ভাগ (২/৩ অংশ) পাবে শিক্ষার্থী এবং ১ ভাগ (১/৩ অংশ) পাবে প্রতিষ্ঠান (বাদশাহ স্যার)।
+- ফরেক্স ট্রেডিং (স্পেশাল কোর্স - ৩ মাস): ফি ১৫,০০০ টাকা (একদম ফিক্সড, কোনো ডিসকাউন্ট নেই)। লাইভ কাজ করতে ১,০০০ ডলার ইনভেস্ট করতে হবে (তবে সাথে সাথে নয়, কোর্স শেষ করার পরেও ইনভেস্ট করা যাবে)। প্রফিটের ৩ ভাগের ১ ভাগ (১/৩ অংশ) বাদশাহ স্যারকে দিতে হবে এবং ২ ভাগ শিক্ষার্থী পাবে। এটি সরকারি ফ্রি কোর্সের সাথেও একসাথে করা যাবে।
+
+### ৩. লোকেশন ও পেমেন্ট নিয়ম
+- কাস্টমার যদি লামা, আলীকদম, পেকুয়া, বদরখালী, হারবাং বা ডুলাহাজারা থেকে হয়, তবে তাকে বলবে আমাদের সেন্টার নতুন বাস টার্মিনালে লামা-আলীকদম কাউন্টারের ঠিক পাশেই (পুরাতন কমার্স কলেজের ২য় তলায়), গাড়ি থেকে নেমেই মাত্র ১ মিনিটের পথ!
+- বিকাশ পেমেন্ট নম্বর: 01777109390 (অ্যাপের Payment অপশন) এবং নগদ নম্বর: 01725259074। প্রাথমিক কল: 01725259074, জরুরি কল: 01777105390, হোয়াটসঅ্যাপ: 01832465790।
+"""
+
+class AlAqsaAssistant:
+    def __init__(self, config_path="Courses.json"):
+        # Load course configuration
+        if os.path.exists(config_path):
+            with open(config_path, "r", encoding="utf-8") as f:
+                self.data = json.load(f)
+        else:
+            self.data = {}
+
+        # Initialize Gemini 1.5 Flash model with system instructions
+        self.model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            system_instruction=MASTER_SYSTEM_PROMPT
+        )
+
+        # RAM Cache synced with Google Sheets
+        self.user_state = {}
+
+    def sync_to_crm(self, customer_id, **kwargs):
+        """Save or update data directly to Google Sheets (Cloud DB)"""
+        payload = {"action": "upsert_lead", "customer_id": str(customer_id)}
+        payload.update(kwargs)
+        try:
+            res = requests.post(GOOGLE_SHEET_WEBHOOK_URL, json=payload, timeout=10)
+            return res.json()
+        except Exception as e:
+            print(f"Google Drive/Sheet Sync Error: {e}")
+            return None
+
+    def get_user_state(self, customer_id, customer_name="Student"):
+        """Fetch customer state from RAM or pull from Google Sheet if server restarted"""
+        cid = str(customer_id)
+        if cid in self.user_state:
+            return self.user_state[cid]
+
+        # Try pulling from Google Sheets Cloud DB
+        try:
+            res = requests.post(
+                GOOGLE_SHEET_WEBHOOK_URL,
+                json={"action": "get_customer", "customer_id": cid},
+                timeout=8
+            ).json()
+            if res.get("found"):
+                self.user_state[cid] = {
+                    "step": int(res.get("step", 0)),
+                    "course": res.get("course", "General Inquiry"),
+                    "regular_fee": int(res.get("regular_fee", 5000)),
+                    "step1_fee": int(res.get("offer_fee", 4500)),
+                    "step2_fee": int(res.get("offer_fee", 4000)),
+                    "final_fee": int(res.get("final_fee", 3500)),
+                    "phone": res.get("phone", None),
+                    "has_chatted": True
+                }
+                return self.user_state[cid]
+        except Exception as e:
+            print(f"Cloud Fetch Warning: {e}")
+
+        # Default state for brand new user
+        self.user_state[cid] = {
+            "step": 0,
+            "course": "General Inquiry",
+            "regular_fee": 5000,
+            "step1_fee": 4500,
+            "step2_fee": 4000,
+            "final_fee": 3500,
+            "phone": None,
+            "has_chatted": False
+        }
+        return self.user_state[cid]
+
+    def has_chatted_before(self, customer_id):
+        """Check if user has previously chatted in inbox (for Like/Comment Lead Hunter)"""
+        state = self.get_user_state(customer_id)
+        return state.get("has_chatted", False)
+
+    def _detect_course_and_update_fees(self, text, state):
+        """Detect which course the user is talking about and set fee ladder"""
+        t = text.lower()
+        if any(w in t for w in ["freelanc", "ফ্রিল্যান্স", "আউটসোর্সিং", "digital marketing", "website", "hacking", "হ্যাকিং"]):
+            state.update({
+                "course": "Freelancing (6 Months)",
+                "regular_fee": 15000, "step1_fee": 14000, "step2_fee": 13000, "final_fee": 12500, "step": 0
+            })
+        elif any(w in t for w in ["forex", "ফরেক্স", "ট্রেডিং", "trading"]):
+            state.update({
+                "course": "Forex Trading (3 Months)",
+                "regular_fee": 15000, "step1_fee": 15000, "step2_fee": 15000, "final_fee": 15000, "step": 0
+            })
+        elif any(w in t for w in ["graphic", "গ্রাফিক", "গ্রাফিক্স", "ডিজাইন"]):
+            state.update({
+                "course": "Professional Graphic Design",
+                "regular_fee": 6500, "step1_fee": 5500, "step2_fee": 5000, "final_fee": 4500, "step": 0
+            })
+        elif any(w in t for w in ["computer", "কম্পিউটার", "office", "অফিস"]):
+            state.update({
+                "course": "Computer Office Application",
+                "regular_fee": 5000, "step1_fee": 4500, "step2_fee": 4000, "final_fee": 3500, "step": 0
+            })
+        elif any(w in t for w in ["tailor", "সেলাই", "ড্রেস"]):
+            state.update({
+                "course": "Tailoring & Dress Making",
+                "regular_fee": 4500, "step1_fee": 3500, "step2_fee": 3200, "final_fee": 3000, "step": 0
+            })
+        elif any(w in t for w in ["free", "ফ্রি", "সরকারি", "ভাতা", "স্কিল", "skill"]):
+            state["course"] = "Govt Free Skill Development"
+
+    def handle_message(self, customer_id, message_text, customer_name="Student"):
+        """Main Hybrid AI Handler: State Tracking + Gemini 1.5 Flash Response"""
+        text = message_text.strip()
+        lower_text = text.lower()
+        state = self.get_user_state(customer_id, customer_name)
+        state["has_chatted"] = True
+
+        # 1. Detect if user gave a mobile number (Lead Collection)
+        phone_match = re.search(r"01[3-9]\d{8}", lower_text)
+        if phone_match:
+            phone_number = phone_match.group(0)
+            state["phone"] = phone_number
+            self.sync_to_crm(
+                customer_id,
+                name=customer_name,
+                phone=phone_number,
+                course=state["course"],
+                bargain_step=state["step"],
+                has_chatted=True,
+                status="Waiting for Sir Approval",
+                note=f"User gave phone during bargaining. Msg: {text}"
+            )
+            return {
+                "reply": (
+                    "অসংখ্য ধন্যবাদ ভাইয়া! আপনার নম্বরটি আমি নোট করে নিয়েছি এবং বিষয়টি সরাসরি বাদশাহ স্যারকে জানিয়ে দিয়েছি।\n\n"
+                    "স্যার বর্তমানে ল্যাব ক্লাসে একটু ব্যস্ত আছেন। স্যারের সাথে কথা বলে আমি একটু পরেই আপনাকে মেসেজের মাধ্যমে চূড়ান্ত সিদ্ধান্ত জানিয়ে দেবো (ইনশাআল্লাহ)।"
+                ),
+                "alert_admin": True,
+                "alert_type": "BARGAIN_LEAD",
+                "phone": phone_number,
+                "course": state["course"],
+                "final_fee": state["final_fee"],
+                "user_msg": text
+            }
+
+        # 2. Update course selection if mentioned
+        self._detect_course_and_update_fees(lower_text, state)
+
+        # 3. Check if the user is bargaining / asking for a discount
+        bargain_words = ["besi", "beshi", "kom", "koman", "discount", "বেশি", "কম", "কমান", "রাখেন", "ছাড়", "বাজেট", "টাকায় হবে"]
+        is_bargaining = any(w in lower_text for w in bargain_words)
+
+        bargain_instruction = ""
+        if is_bargaining and state["course"] != "Govt Free Skill Development":
+            if state["course"] == "Forex Trading (3 Months)":
+                bargain_instruction = "কাস্টমার দাম কমাতে চাচ্ছে। কিন্তু ফরেক্স ট্রেডিং কোর্সের ফি ১৫,০০০ টাকা একদম ফিক্সড, ১ টাকাও কমবে না। তবে তাকে মনে করিয়ে দাও যে ১,০০০ ডলার ইনভেস্টমেন্ট এখনই দিতে হবে না, কোর্স শেষেও করা যাবে।"
+            else:
+                state["step"] += 1
+                if state["step"] == 1:
+                    offered = state["step1_fee"]
+                    bargain_instruction = f"কাস্টমার ১ম বার দাম কমাতে বলছে। তাকে আমাদের আধুনিক ল্যাব ও আলাদা পিসির মান বুঝিয়ে বলো এবং বিশেষ ছাড়ের কথা বলে মাত্র ১ ধাপ কমিয়ে {offered} টাকা অফার করো। এর নিচে নামবে না।"
+                elif state["step"] == 2:
+                    offered = state["step2_fee"]
+                    bargain_instruction = f"কাস্টমার ২য় বার দাম কমাতে বলছে। তাকে বলো বাদশাহ স্যারের সাথে কথা বলে তার শেখার আগ্রহের কারণে আরও একটু কমিয়ে {offered} টাকা রাখা যাবে।"
+                elif state["step"] == 3:
+                    offered = state["final_fee"]
+                    bargain_instruction = f"কাস্টমার ৩য় বার জোর করছে। তাকে বলো এটিই আমাদের সর্বনিম্ন বটম-লাইন ফি: {offered} টাকা। এর নিচে কোনোভাবেই সম্ভব নয়।"
+                else:
+                    offered = state["final_fee"]
+                    bargain_instruction = (
+                        f"কাস্টমার আমাদের সর্বনিম্ন দাম ({offered} টাকা)-এর চেয়েও কমে করতে চাচ্ছে। "
+                        f"তুমি তাকে বলো যে {offered} টাকার নিচে কমানোর ক্ষমতা তোমার নেই, তবে সে যেন তার 'নাম', 'সচল মোবাইল নম্বর' এবং 'তার বাজেট কত' তা এখানে লিখে দেয়—তুমি বাদশাহ স্যারের সাথে কথা বলে তাকে এসএমএস দিয়ে জানাবে।"
+                    )
+        else:
+            current_price_map = {0: state["regular_fee"], 1: state["step1_fee"], 2: state["step2_fee"], 3: state["final_fee"]}
+            active_fee = current_price_map.get(state["step"], state["final_fee"])
+            bargain_instruction = f"বর্তমানে কাস্টমারের কোর্স: {state['course']}। যদি দাম জানতে চায় তবে {active_fee} টাকা বলবে।"
+
+        # 4. Generate Smart Response using Gemini 1.5 Flash
+        prompt = (
+            f"কাস্টমারের নাম: {customer_name}\n"
+            f"কাস্টমারের মেসেজ: \"{text}\"\n"
+            f"তোমার জন্য বর্তমান নির্দেশনা: {bargain_instruction}\n\n"
+            f"উপরের নির্দেশনা মেনে কাস্টমারকে সরাসরি বাংলায় সুন্দর ও প্রফেশনাল উত্তর দাও:"
+        )
+
+        try:
+            ai_reply = self.model.generate_content(prompt).text.strip()
+        except Exception as e:
+            print(f"Gemini API Error: {e}")
+            ai_reply = (
+                "আসসালামু আলাইকুম! আল আকসা কম্পিউটারে আপনাকে স্বাগতম। "
+                "আমাদের কম্পিউটার, গ্রাফিক ডিজাইন, ফ্রিল্যান্সিং, ফরেক্স এবং সরকারি ফ্রি কোর্সে ভর্তি চলছে। "
+                "বিস্তারিত জানতে আপনার মোবাইল নম্বরটি দিন অথবা কল করুন: 01725259074।"
+            )
+
+        # 5. Sync updated state to Google Sheets Cloud DB
+        self.sync_to_crm(
+            customer_id,
+            name=customer_name,
+            course=state["course"],
+            bargain_step=state["step"],
+            regular_fee=state["regular_fee"],
+            offer_fee=state["step1_fee"],
+            final_fee=state["final_fee"],
+            has_chatted=True,
+            status=f"Active Chat (Step {state['step']})"
+        )
+
+        return {
+            "reply": ai_reply,
+            "alert_admin": False
+        }
+
+    def analyze_payment_screenshot(self, image_bytes, mime_type="image/jpeg"):
+        """Use Gemini Vision (OCR) to read Bkash/Nagad screenshot automatically"""
+        prompt = (
+            "এই ছবিটি কি বিকাশ (bKash) বা নগদ (Nagad) পেমেন্টের স্ক্রিনশট? "
+            "যদি হয়, তবে ভেতর থেকে: ১. কত টাকা (Amount), ২. ট্রানজেকশন আইডি (TrxID), এবং ৩. প্রাপক নম্বর (01777109390 বা 01725259074 আছে কি না) তা বাংলায় সংক্ষেপে বের করে দাও। "
+            "আর পেমেন্ট স্ক্রিনশট না হলে লেখো: 'এটি পেমেন্ট স্ক্রিনশট নয়'।"
+        )
+        try:
+            response = self.model.generate_content([
+                prompt,
+                {"mime_type": mime_type, "data": image_bytes}
+            ])
+            return response.text.strip()
+        except Exception as e:
+            return f"ছবি রিড করতে সমস্যা হয়েছে: {e}"
+
+    def handle_voice_message(self, customer_id, audio_bytes, mime_type="audio/ogg", customer_name="Student"):
+        """Listen to customer voice note and reply using bargaining rules"""
+        try:
+            transcribe_prompt = "এই অডিও মেসেজে কাস্টমার কী বলেছে তা হুবহু বাংলায় লিখে দাও।"
+            transcript = self.model.generate_content([
+                transcribe_prompt,
+                {"mime_type": mime_type, "data": audio_bytes}
+            ]).text.strip()
+            return self.handle_message(customer_id, transcript, customer_name)
+        except Exception as e:
+            print(f"Voice Error: {e}")
+            return {"reply": "ভাইয়া, আপনার ভয়েস মেসেজটি স্পষ্ট বোঝা যায়নি। অনুগ্রহ করে একটু লিখে বলবেন অথবা আপনার মোবাইল নম্বরটি দিন!", "alert_admin": False}
