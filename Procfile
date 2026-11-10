@@ -1,1 +1,1 @@
-web: python fb_bot.py
+web: gunicorn fb_bot:app --bind 0.0.0.0:$PORT --timeout 120
