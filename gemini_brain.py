@@ -13,7 +13,6 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 client = None
 if GEMINI_API_KEY:
-    # Timeout set to 15 seconds (15000 ms) to prevent worker crashes
     client = genai.Client(
         api_key=GEMINI_API_KEY,
         http_options={'timeout': 15000}
@@ -58,7 +57,7 @@ class AlAqsaAssistant:
 
     def sync_to_crm(self, customer_id, **kwargs):
         if not GOOGLE_SHEET_WEBHOOK_URL:
-            return None # Skip if URL is empty to prevent hanging
+            return None
         payload = {"action": "upsert_lead", "customer_id": str(customer_id)}
         payload.update(kwargs)
         try:
@@ -74,7 +73,6 @@ class AlAqsaAssistant:
         if cid in self.user_state:
             return self.user_state[cid]
 
-        # Skip cloud fetch if URL is empty to prevent hanging
         if GOOGLE_SHEET_WEBHOOK_URL:
             try:
                 res = requests.post(
@@ -153,35 +151,50 @@ class AlAqsaAssistant:
         # 2. Course Selection
         self._detect_course_and_update_fees(lower_text, state)
 
-        # 3. Bargaining Logic
+        # 3. Bargaining Logic & Smart Fallback Prep
         bargain_words = ["besi", "beshi", "kom", "koman", "discount", "বেশি", "কম", "কমান", "রাখেন", "ছাড়", "বাজেট", "টাকায় হবে"]
         is_bargaining = any(w in lower_text for w in bargain_words)
 
         bargain_instruction = ""
+        fallback_reply = ""
+        
         if is_bargaining and state["course"] != "Govt Free Skill Development":
             if state["course"] == "Forex Trading (3 Months)":
                 bargain_instruction = "কাস্টমার দাম কমাতে চাচ্ছে। ফরেক্স ট্রেডিং কোর্সের ফি ১৫,০০০ টাকা একদম ফিক্সড, ১ টাকাও কমবে না। তবে তাকে মনে করিয়ে দাও যে ১,০০০ ডলার ইনভেস্টমেন্ট এখনই দিতে হবে না, কোর্স শেষেও করা যাবে।"
+                fallback_reply = "ভাইয়া, ফরেক্স ট্রেডিং কোর্সের ফি ১৫,০০০ টাকা একদম ফিক্সড। এখানে কোনো ডিসকাউন্ট নেই। তবে লাইভ কাজের জন্য ১,০০০ ডলার ইনভেস্টমেন্ট এখনই দিতে হবে না, কোর্স শেষেও করা যাবে।"
             else:
                 state["step"] += 1
                 if state["step"] == 1:
                     offered = state["step1_fee"]
                     bargain_instruction = f"কাস্টমার ১ম বার দাম কমাতে বলছে। তাকে আমাদের আধুনিক ল্যাব ও আলাদা পিসির মান বুঝিয়ে বলো এবং বিশেষ ছাড়ের কথা বলে মাত্র ১ ধাপ কমিয়ে {offered} টাকা অফার করো। এর নিচে নামবে না।"
+                    fallback_reply = f"ভাইয়া, আমাদের আধুনিক ল্যাব ও আলাদা পিসির সুবিধার কারণে ফি একটু বেশি। তবে আপনার আগ্রহের কথা চিন্তা করে বিশেষ ছাড়ে {offered} টাকা রাখা যাবে।"
                 elif state["step"] == 2:
                     offered = state["step2_fee"]
                     bargain_instruction = f"কাস্টমার ২য় বার দাম কমাতে বলছে। তাকে বলো বাদশাহ স্যারের সাথে কথা বলে তার শেখার আগ্রহের কারণে আরও একটু কমিয়ে {offered} টাকা রাখা যাবে।"
+                    fallback_reply = f"বাদশাহ স্যারের সাথে কথা বলে আপনার শেখার আগ্রহের কারণে আরও একটু কমিয়ে {offered} টাকা রাখা যাবে।"
                 elif state["step"] == 3:
                     offered = state["final_fee"]
                     bargain_instruction = f"কাস্টমার ৩য় বার জোর করছে। তাকে বলো এটিই আমাদের সর্বনিম্ন বটম-লাইন ফি: {offered} টাকা। এর নিচে কোনোভাবেই সম্ভব নয়।"
+                    fallback_reply = f"ভাইয়া, এটিই আমাদের সর্বনিম্ন বটম-লাইন ফি: {offered} টাকা। এর নিচে কোনোভাবেই সম্ভব নয়।"
                 else:
                     offered = state["final_fee"]
                     bargain_instruction = f"কাস্টমার আমাদের সর্বনিম্ন দাম ({offered} টাকা)-এর চেয়েও কমে করতে চাচ্ছে। তুমি তাকে বলো যে {offered} টাকার নিচে কমানোর ক্ষমতা তোমার নেই, তবে সে যেন তার 'নাম', 'সচল মোবাইল নম্বর' এবং 'তার বাজেট কত' তা এখানে লিখে দেয়—তুমি বাদশাহ স্যারের সাথে কথা বলে তাকে এসএমএস দিয়ে জানাবে।"
+                    fallback_reply = f"ভাইয়া, {offered} টাকার নিচে কমানোর ক্ষমতা আমার নেই। আপনি আপনার নাম, সচল মোবাইল নম্বর এবং আপনার বাজেট এখানে লিখে দিন। আমি বাদশাহ স্যারকে জানিয়ে আপনাকে জানাবো।"
         else:
             current_price_map = {0: state["regular_fee"], 1: state["step1_fee"], 2: state["step2_fee"], 3: state["final_fee"]}
             active_fee = current_price_map.get(state["step"], state["final_fee"])
             bargain_instruction = f"বর্তমানে কাস্টমারের কোর্স: {state['course']}। যদি দাম জানতে চায় তবে {active_fee} টাকা বলবে।"
+            
+            # Local Fallback Generator
+            if "hi" in lower_text or "hello" in lower_text or "salam" in lower_text:
+                fallback_reply = "আসসালামু আলাইকুম! আল আকসা কম্পিউটারে আপনাকে স্বাগতম। আপনি কোন কোর্সটি সম্পর্কে জানতে চান? (কম্পিউটার, গ্রাফিক ডিজাইন, ফ্রিল্যান্সিং, ফরেক্স বা সরকারি ফ্রি কোর্স)"
+            elif state["course"] == "Govt Free Skill Development":
+                fallback_reply = "সরকারি ফ্রি কোর্সে ভর্তি চলছে! রেজিস্ট্রেশন ফি ১,৫০০ টাকা (ফেরতযোগ্য) এবং ফরম ফি ১০০ টাকা। কোর্স শেষে ১০,০০০+ টাকা ভাতা ও সার্টিফিকেট পাবেন। বিস্তারিত জানতে অফিসে আসুন।"
+            else:
+                fallback_reply = f"{state['course']} কোর্সের ফি {active_fee} টাকা। আমাদের ল্যাবে আলাদা পিসিতে Practical সহকারে ক্লাস করানো হয়। ভর্তি হতে চাইলে আপনার মোবাইল নম্বরটি দিন।"
 
         # 4. Generate Smart Response
-        ai_reply = "আসসালামু আলাইকুম! আল আকসা কম্পিউটারে আপনাকে স্বাগতম। আমাদের কম্পিউটার, গ্রাফিক ডিজাইন, ফ্রিল্যান্সিং, ফরেক্স এবং সরকারি ফ্রি কোর্সে ভর্তি চলছে। বিস্তারিত জানতে আপনার মোবাইল নম্বরটি দিন অথবা কল করুন: 01725259074।"
+        ai_reply = fallback_reply # Set the smart fallback as default
         
         if client:
             try:
@@ -198,7 +211,7 @@ class AlAqsaAssistant:
                 if response.text:
                     ai_reply = response.text.strip()
             except Exception as e:
-                print(f"Gemini API Error: {e}")
+                print(f"Gemini API Error (Using Smart Fallback): {e}")
 
         # 5. Sync updated state
         self.sync_to_crm(customer_id, name=customer_name, course=state["course"], bargain_step=state["step"], regular_fee=state["regular_fee"], offer_fee=state["step1_fee"], final_fee=state["final_fee"], has_chatted=True, status=f"Active Chat (Step {state['step']})")
@@ -225,7 +238,7 @@ class AlAqsaAssistant:
         try:
             transcribe_prompt = "এই অডিও মেসেজে কাস্টমার কী বলেছে তা হুবহু বাংলায় লিখে দাও।"
             response = client.models.generate_content(
-               model='gemini-3.8-flash',
+                model='gemini-3.8-flash',
                 contents=[
                     transcribe_prompt,
                     types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
