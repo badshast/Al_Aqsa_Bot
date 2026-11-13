@@ -2,23 +2,26 @@ import json
 import os
 import re
 import requests
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
-# 1. Configure Gemini AI securely using Environment Variable
+# 1. Configure Gemini AI securely (NEW SDK)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_API_KEY)
+if GEMINI_API_KEY:
+    client = genai.Client(api_key=GEMINI_API_KEY)
+else:
+    client = None
 
-# 2. Google Sheet & Drive Cloud Database Webhook URL
+# 2. Google Sheet Cloud Database URL
 GOOGLE_SHEET_WEBHOOK_URL = os.getenv(
     "GOOGLE_SHEET_WEBHOOK_URL",
     "https://script.googleusercontent.com/macros/echo?user_content_key=AUkAhnSGYPfqwVvHJObAJqSvGdJUAypVstMQ4pWUTnF9tlY_VUOeTHNTwPWEoFxAHbGOWY9wtmNrF-Wne7diHqfKD75dMzlQYmkDsoGcPd7xy4Nj58YWQQR-got41G6GewooI2T8fknAU__h90wf2K_sdSu-Sw-JKs085A7Xa9XfKFnZf3kcp_Lr_x8RM-rJJGDOtwcSW--sd4Bq69J73wKXTYXs56ehuD_0wFNMRCpP2eoHVCcwuK2-iSfTZ-3VmMGs-Nj4ORfSDlikN3x_hU5Rw7mdc3vAoQ&lib=M8Z7ms9C7gwd7yQ7wvKCVENyo-8z-9mm1"
 )
 
-# Master System Instruction for Gemini 1.5 Flash
 MASTER_SYSTEM_PROMPT = """
 তুমি হলে "আল আকসা কম্পিউটার" (ঠিকানা: নতুন বাস টার্মিনাল, লামা-আলীকদম বাস কাউন্টারের পাশে, পুরাতন কমার্স কলেজের ২য় তলা, চকরিয়া, কক্সবাজার)-এর অফিশিয়াল এআই সেলস এক্সিকিউটিভ এবং বাদশাহ স্যারের পার্সোনাল অ্যাসিস্ট্যান্ট। প্রতিষ্ঠানের পরিচালক: মোহাম্মদ বাদশা মিয়া।
 
@@ -46,62 +49,53 @@ MASTER_SYSTEM_PROMPT = """
 
 class AlAqsaAssistant:
     def __init__(self, config_path="Courses.json"):
-        # Load course configuration
         if os.path.exists(config_path):
             with open(config_path, "r", encoding="utf-8") as f:
                 self.data = json.load(f)
         else:
             self.data = {}
-
-        # Initialize Gemini 1.5 Flash model with system instructions
-        self.model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            system_instruction=MASTER_SYSTEM_PROMPT
-        )
-
-        # RAM Cache synced with Google Sheets
         self.user_state = {}
 
     def sync_to_crm(self, customer_id, **kwargs):
-        """Save or update data directly to Google Sheets (Cloud DB)"""
         payload = {"action": "upsert_lead", "customer_id": str(customer_id)}
         payload.update(kwargs)
         try:
             res = requests.post(GOOGLE_SHEET_WEBHOOK_URL, json=payload, timeout=10)
-            return res.json()
+            if res.status_code == 200:
+                return res.json()
         except Exception as e:
             print(f"Google Drive/Sheet Sync Error: {e}")
-            return None
+        return None
 
     def get_user_state(self, customer_id, customer_name="Student"):
-        """Fetch customer state from RAM or pull from Google Sheet if server restarted"""
         cid = str(customer_id)
         if cid in self.user_state:
             return self.user_state[cid]
 
-        # Try pulling from Google Sheets Cloud DB
         try:
             res = requests.post(
                 GOOGLE_SHEET_WEBHOOK_URL,
                 json={"action": "get_customer", "customer_id": cid},
                 timeout=8
-            ).json()
-            if res.get("found"):
-                self.user_state[cid] = {
-                    "step": int(res.get("step", 0)),
-                    "course": res.get("course", "General Inquiry"),
-                    "regular_fee": int(res.get("regular_fee", 5000)),
-                    "step1_fee": int(res.get("offer_fee", 4500)),
-                    "step2_fee": int(res.get("offer_fee", 4000)),
-                    "final_fee": int(res.get("final_fee", 3500)),
-                    "phone": res.get("phone", None),
-                    "has_chatted": True
-                }
-                return self.user_state[cid]
+            )
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("found"):
+                    self.user_state[cid] = {
+                        "step": int(data.get("step", 0)),
+                        "course": data.get("course", "General Inquiry"),
+                        "regular_fee": int(data.get("regular_fee", 5000)),
+                        "step1_fee": int(data.get("offer_fee", 4500)),
+                        "step2_fee": int(data.get("step2_fee", 4000)),
+                        "final_fee": int(data.get("final_fee", 3500)),
+                        "phone": data.get("phone", None),
+                        "has_chatted": True,
+                        "status": data.get("status", "Active Chat")
+                    }
+                    return self.user_state[cid]
         except Exception as e:
             print(f"Cloud Fetch Warning: {e}")
 
-        # Default state for brand new user
         self.user_state[cid] = {
             "step": 0,
             "course": "General Inquiry",
@@ -110,92 +104,59 @@ class AlAqsaAssistant:
             "step2_fee": 4000,
             "final_fee": 3500,
             "phone": None,
-            "has_chatted": False
+            "has_chatted": False,
+            "status": "New Lead"
         }
         return self.user_state[cid]
 
     def has_chatted_before(self, customer_id):
-        """Check if user has previously chatted in inbox (for Like/Comment Lead Hunter)"""
         state = self.get_user_state(customer_id)
         return state.get("has_chatted", False)
 
     def _detect_course_and_update_fees(self, text, state):
-        """Detect which course the user is talking about and set fee ladder"""
         t = text.lower()
+        if state["course"] != "General Inquiry":
+            return # Don't reset if already in a course
+
         if any(w in t for w in ["freelanc", "ফ্রিল্যান্স", "আউটসোর্সিং", "digital marketing", "website", "hacking", "হ্যাকিং"]):
-            state.update({
-                "course": "Freelancing (6 Months)",
-                "regular_fee": 15000, "step1_fee": 14000, "step2_fee": 13000, "final_fee": 12500, "step": 0
-            })
+            state.update({"course": "Freelancing (6 Months)", "regular_fee": 15000, "step1_fee": 14000, "step2_fee": 13000, "final_fee": 12500, "step": 0})
         elif any(w in t for w in ["forex", "ফরেক্স", "ট্রেডিং", "trading"]):
-            state.update({
-                "course": "Forex Trading (3 Months)",
-                "regular_fee": 15000, "step1_fee": 15000, "step2_fee": 15000, "final_fee": 15000, "step": 0
-            })
+            state.update({"course": "Forex Trading (3 Months)", "regular_fee": 15000, "step1_fee": 15000, "step2_fee": 15000, "final_fee": 15000, "step": 0})
         elif any(w in t for w in ["graphic", "গ্রাফিক", "গ্রাফিক্স", "ডিজাইন"]):
-            state.update({
-                "course": "Professional Graphic Design",
-                "regular_fee": 6500, "step1_fee": 5500, "step2_fee": 5000, "final_fee": 4500, "step": 0
-            })
+            state.update({"course": "Professional Graphic Design", "regular_fee": 6500, "step1_fee": 5500, "step2_fee": 5000, "final_fee": 4500, "step": 0})
         elif any(w in t for w in ["computer", "কম্পিউটার", "office", "অফিস"]):
-            state.update({
-                "course": "Computer Office Application",
-                "regular_fee": 5000, "step1_fee": 4500, "step2_fee": 4000, "final_fee": 3500, "step": 0
-            })
+            state.update({"course": "Computer Office Application", "regular_fee": 5000, "step1_fee": 4500, "step2_fee": 4000, "final_fee": 3500, "step": 0})
         elif any(w in t for w in ["tailor", "সেলাই", "ড্রেস"]):
-            state.update({
-                "course": "Tailoring & Dress Making",
-                "regular_fee": 4500, "step1_fee": 3500, "step2_fee": 3200, "final_fee": 3000, "step": 0
-            })
+            state.update({"course": "Tailoring & Dress Making", "regular_fee": 4500, "step1_fee": 3500, "step2_fee": 3200, "final_fee": 3000, "step": 0})
         elif any(w in t for w in ["free", "ফ্রি", "সরকারি", "ভাতা", "স্কিল", "skill"]):
             state["course"] = "Govt Free Skill Development"
 
     def handle_message(self, customer_id, message_text, customer_name="Student"):
-        """Main Hybrid AI Handler: State Tracking + Gemini 1.5 Flash Response"""
         text = message_text.strip()
         lower_text = text.lower()
         state = self.get_user_state(customer_id, customer_name)
         state["has_chatted"] = True
 
-        # 1. Detect if user gave a mobile number (Lead Collection)
+        # 1. Phone Number Detection
         phone_match = re.search(r"01[3-9]\d{8}", lower_text)
         if phone_match:
             phone_number = phone_match.group(0)
             state["phone"] = phone_number
-            self.sync_to_crm(
-                customer_id,
-                name=customer_name,
-                phone=phone_number,
-                course=state["course"],
-                bargain_step=state["step"],
-                has_chatted=True,
-                status="Waiting for Sir Approval",
-                note=f"User gave phone during bargaining. Msg: {text}"
-            )
-            return {
-                "reply": (
-                    "অসংখ্য ধন্যবাদ ভাইয়া! আপনার নম্বরটি আমি নোট করে নিয়েছি এবং বিষয়টি সরাসরি বাদশাহ স্যারকে জানিয়ে দিয়েছি।\n\n"
-                    "স্যার বর্তমানে ল্যাব ক্লাসে একটু ব্যস্ত আছেন। স্যারের সাথে কথা বলে আমি একটু পরেই আপনাকে মেসেজের মাধ্যমে চূড়ান্ত সিদ্ধান্ত জানিয়ে দেবো (ইনশাআল্লাহ)।"
-                ),
-                "alert_admin": True,
-                "alert_type": "BARGAIN_LEAD",
-                "phone": phone_number,
-                "course": state["course"],
-                "final_fee": state["final_fee"],
-                "user_msg": text
-            }
+            state["status"] = "Waiting for Sir Approval"
+            self.sync_to_crm(customer_id, name=customer_name, phone=phone_number, course=state["course"], bargain_step=state["step"], has_chatted=True, status=state["status"], note=f"Msg: {text}")
+            return {"reply": "অসংখ্য ধন্যবাদ ভাইয়া! আপনার নম্বরটি আমি নোট করে নিয়েছি এবং বিষয়টি সরাসরি বাদশাহ স্যারকে জানিয়ে দিয়েছি।\n\nস্যার বর্তমানে ল্যাব ক্লাসে একটু ব্যস্ত আছেন। স্যারের সাথে কথা বলে আমি একটু পরেই আপনাকে মেসেজের মাধ্যমে চূড়ান্ত সিদ্ধান্ত জানিয়ে দেবো (ইনশাআল্লাহ)।", "alert_admin": True, "alert_type": "BARGAIN_LEAD", "phone": phone_number, "course": state["course"], "final_fee": state["final_fee"], "user_msg": text}
 
-        # 2. Update course selection if mentioned
+        # 2. Course Selection
         self._detect_course_and_update_fees(lower_text, state)
 
-        # 3. Check if the user is bargaining / asking for a discount
+        # 3. Bargaining Logic
         bargain_words = ["besi", "beshi", "kom", "koman", "discount", "বেশি", "কম", "কমান", "রাখেন", "ছাড়", "বাজেট", "টাকায় হবে"]
         is_bargaining = any(w in lower_text for w in bargain_words)
 
         bargain_instruction = ""
         if is_bargaining and state["course"] != "Govt Free Skill Development":
             if state["course"] == "Forex Trading (3 Months)":
-                bargain_instruction = "কাস্টমার দাম কমাতে চাচ্ছে। কিন্তু ফরেক্স ট্রেডিং কোর্সের ফি ১৫,০০০ টাকা একদম ফিক্সড, ১ টাকাও কমবে না। তবে তাকে মনে করিয়ে দাও যে ১,০০০ ডলার ইনভেস্টমেন্ট এখনই দিতে হবে না, কোর্স শেষেও করা যাবে।"
+                bargain_instruction = "কাস্টমার দাম কমাতে চাচ্ছে। ফরেক্স ট্রেডিং কোর্সের ফি ১৫,০০০ টাকা একদম ফিক্সড, ১ টাকাও কমবে না। তবে তাকে মনে করিয়ে দাও যে ১,০০০ ডলার ইনভেস্টমেন্ট এখনই দিতে হবে না, কোর্স শেষেও করা যাবে।"
             else:
                 state["step"] += 1
                 if state["step"] == 1:
@@ -209,75 +170,64 @@ class AlAqsaAssistant:
                     bargain_instruction = f"কাস্টমার ৩য় বার জোর করছে। তাকে বলো এটিই আমাদের সর্বনিম্ন বটম-লাইন ফি: {offered} টাকা। এর নিচে কোনোভাবেই সম্ভব নয়।"
                 else:
                     offered = state["final_fee"]
-                    bargain_instruction = (
-                        f"কাস্টমার আমাদের সর্বনিম্ন দাম ({offered} টাকা)-এর চেয়েও কমে করতে চাচ্ছে। "
-                        f"তুমি তাকে বলো যে {offered} টাকার নিচে কমানোর ক্ষমতা তোমার নেই, তবে সে যেন তার 'নাম', 'সচল মোবাইল নম্বর' এবং 'তার বাজেট কত' তা এখানে লিখে দেয়—তুমি বাদশাহ স্যারের সাথে কথা বলে তাকে এসএমএস দিয়ে জানাবে।"
-                    )
+                    bargain_instruction = f"কাস্টমার আমাদের সর্বনিম্ন দাম ({offered} টাকা)-এর চেয়েও কমে করতে চাচ্ছে। তুমি তাকে বলো যে {offered} টাকার নিচে কমানোর ক্ষমতা তোমার নেই, তবে সে যেন তার 'নাম', 'সচল মোবাইল নম্বর' এবং 'তার বাজেট কত' তা এখানে লিখে দেয়—তুমি বাদশাহ স্যারের সাথে কথা বলে তাকে এসএমএস দিয়ে জানাবে।"
         else:
             current_price_map = {0: state["regular_fee"], 1: state["step1_fee"], 2: state["step2_fee"], 3: state["final_fee"]}
             active_fee = current_price_map.get(state["step"], state["final_fee"])
             bargain_instruction = f"বর্তমানে কাস্টমারের কোর্স: {state['course']}। যদি দাম জানতে চায় তবে {active_fee} টাকা বলবে।"
 
-        # 4. Generate Smart Response using Gemini 1.5 Flash
-        prompt = (
-            f"কাস্টমারের নাম: {customer_name}\n"
-            f"কাস্টমারের মেসেজ: \"{text}\"\n"
-            f"তোমার জন্য বর্তমান নির্দেশনা: {bargain_instruction}\n\n"
-            f"উপরের নির্দেশনা মেনে কাস্টমারকে সরাসরি বাংলায় সুন্দর ও প্রফেশনাল উত্তর দাও:"
-        )
-
-        try:
-            ai_reply = self.model.generate_content(prompt).text.strip()
-        except Exception as e:
-            print(f"Gemini API Error: {e}")
-            ai_reply = (
-                "আসসালামু আলাইকুম! আল আকসা কম্পিউটারে আপনাকে স্বাগতম। "
-                "আমাদের কম্পিউটার, গ্রাফিক ডিজাইন, ফ্রিল্যান্সিং, ফরেক্স এবং সরকারি ফ্রি কোর্সে ভর্তি চলছে। "
-                "বিস্তারিত জানতে আপনার মোবাইল নম্বরটি দিন অথবা কল করুন: 01725259074।"
-            )
+        # 4. Generate Smart Response using Gemini 2.0 Flash
+        ai_reply = "আসসালামু আলাইকুম! আল আকসা কম্পিউটারে আপনাকে স্বাগতম। আমাদের কম্পিউটার, গ্রাফিক ডিজাইন, ফ্রিল্যান্সিং, ফরেক্স এবং সরকারি ফ্রি কোর্সে ভর্তি চলছে। বিস্তারিত জানতে আপনার মোবাইল নম্বরটি দিন অথবা কল করুন: 01725259074।" # Fallback
+        
+        if client:
+            try:
+                prompt = f"কাস্টমারের নাম: {customer_name}\nকাস্টমারের মেসেজ: \"{text}\"\nতোমার জন্য বর্তমান নির্দেশনা: {bargain_instruction}\n\nউপরের নির্দেশনা মেনে কাস্টমারকে সরাসরি বাংলায় সুন্দর ও প্রফেশনাল উত্তর দাও:"
+                
+                response = client.models.generate_content(
+                    model='gemini-2.0-flash',
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=MASTER_SYSTEM_PROMPT,
+                        temperature=0.7
+                    )
+                )
+                if response.text:
+                    ai_reply = response.text.strip()
+            except Exception as e:
+                print(f"Gemini API Error: {e}")
 
         # 5. Sync updated state to Google Sheets Cloud DB
-        self.sync_to_crm(
-            customer_id,
-            name=customer_name,
-            course=state["course"],
-            bargain_step=state["step"],
-            regular_fee=state["regular_fee"],
-            offer_fee=state["step1_fee"],
-            final_fee=state["final_fee"],
-            has_chatted=True,
-            status=f"Active Chat (Step {state['step']})"
-        )
+        self.sync_to_crm(customer_id, name=customer_name, course=state["course"], bargain_step=state["step"], regular_fee=state["regular_fee"], offer_fee=state["step1_fee"], final_fee=state["final_fee"], has_chatted=True, status=f"Active Chat (Step {state['step']})")
 
-        return {
-            "reply": ai_reply,
-            "alert_admin": False
-        }
+        return {"reply": ai_reply, "alert_admin": False}
 
     def analyze_payment_screenshot(self, image_bytes, mime_type="image/jpeg"):
-        """Use Gemini Vision (OCR) to read Bkash/Nagad screenshot automatically"""
-        prompt = (
-            "এই ছবিটি কি বিকাশ (bKash) বা নগদ (Nagad) পেমেন্টের স্ক্রিনশট? "
-            "যদি হয়, তবে ভেতর থেকে: ১. কত টাকা (Amount), ২. ট্রানজেকশন আইডি (TrxID), এবং ৩. প্রাপক নম্বর (01777109390 বা 01725259074 আছে কি না) তা বাংলায় সংক্ষেপে বের করে দাও। "
-            "আর পেমেন্ট স্ক্রিনশট না হলে লেখো: 'এটি পেমেন্ট স্ক্রিনশট নয়'।"
-        )
+        if not client: return "Gemini client not configured."
+        prompt = "এই ছবিটি কি বিকাশ (bKash) বা নগদ (Nagad) পেমেন্টের স্ক্রিনশট? যদি হয়, তবে ভেতর থেকে: ১. কত টাকা (Amount), ২. ট্রানজেকশন আইডি (TrxID), এবং ৩. প্রাপক নম্বর (01777109390 বা 01725259074 আছে কি না) তা বাংলায় সংক্ষেপে বের করে দাও। আর পেমেন্ট স্ক্রিনশট না হলে লেখো: 'এটি পেমেন্ট স্ক্রিনশট নয়'।"
         try:
-            response = self.model.generate_content([
-                prompt,
-                {"mime_type": mime_type, "data": image_bytes}
-            ])
+            response = client.models.generate_content(
+                model='gemini-2.0-flash',
+                contents=[
+                    prompt,
+                    types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+                ]
+            )
             return response.text.strip()
         except Exception as e:
             return f"ছবি রিড করতে সমস্যা হয়েছে: {e}"
 
     def handle_voice_message(self, customer_id, audio_bytes, mime_type="audio/ogg", customer_name="Student"):
-        """Listen to customer voice note and reply using bargaining rules"""
+        if not client: return {"reply": "ভয়েস প্রসেসিং বন্ধ আছে।", "alert_admin": False}
         try:
             transcribe_prompt = "এই অডিও মেসেজে কাস্টমার কী বলেছে তা হুবহু বাংলায় লিখে দাও।"
-            transcript = self.model.generate_content([
-                transcribe_prompt,
-                {"mime_type": mime_type, "data": audio_bytes}
-            ]).text.strip()
+            response = client.models.generate_content(
+                model='gemini-2.0-flash',
+                contents=[
+                    transcribe_prompt,
+                    types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
+                ]
+            )
+            transcript = response.text.strip()
             return self.handle_message(customer_id, transcript, customer_name)
         except Exception as e:
             print(f"Voice Error: {e}")
