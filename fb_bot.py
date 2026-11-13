@@ -29,6 +29,86 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 def home():
     return "✅ Al Aqsa Computer Master Automation & Full System is Running Live!"
 
+# ===== নতুন যোগ করা পেজগুলো শুরু =====
+@app.route("/privacy-policy", methods=["GET"])
+def privacy_policy():
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Privacy Policy - Al Aqsa Computer</title>
+        <style>body { font-family: Arial, sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: auto; }</style>
+    </head>
+    <body>
+        <h1>Privacy Policy</h1>
+        <p>Last updated: November 2026</p>
+        <p><strong>Al Aqsa Computer & Matamuhuri Trade & Supply Ltd.</strong> ("we", "us", or "our") operates the Al Aqsa Computer Automation bot. This page informs you of our policies regarding the collection, use, and disclosure of personal data when you use our Facebook Messenger service.</p>
+        <h2>1. Information We Collect</h2>
+        <p>When you interact with our Facebook Page or Messenger bot, we may collect the following information:</p>
+        <ul>
+            <li>Your Facebook Profile Name and ID (PSID).</li>
+            <li>Messages you send to us (text, voice notes, and images).</li>
+            <li>Phone numbers you voluntarily provide during a conversation.</li>
+            <li>Payment screenshots (bKash/Nagad) if you choose to share them for course enrollment.</li>
+        </ul>
+        <h2>2. How We Use Your Information</h2>
+        <p>We use the collected information for the following purposes:</p>
+        <ul>
+            <li>To respond to your inquiries regarding our courses and services.</li>
+            <li>To process admissions, course registrations, and issue digital VIP tokens.</li>
+            <li>To communicate with you via Messenger or SMS regarding your admission.</li>
+            <li>We store this data securely in Google Sheets (Cloud CRM) to maintain your student profile.</li>
+        </ul>
+        <h2>3. Data Sharing and Disclosure</h2>
+        <p>We do not sell, trade, or rent your personal information to third parties. We only share information with our internal administration (via Telegram) to process your requests.</p>
+        <h2>4. Data Deletion</h2>
+        <p>You have the right to request the deletion of your data. If you wish to have your chat history, phone number, or profile removed from our database, please contact us with the subject "Data Deletion Request" at:</p>
+        <p><strong>Email:</strong> mohammadbadsha070@gmail.com<br>
+        <strong>Phone/WhatsApp:</strong> 01832465790</p>
+        <h2>5. Contact Us</h2>
+        <p>If you have any questions about this Privacy Policy, please contact us at:<br>
+        Al Aqsa Computer, New Bus Terminal (2nd Floor, Old Commerce College), Chakaria, Cox's Bazar.</p>
+    </body>
+    </html>
+    """
+    return html_content
+
+@app.route("/terms-of-service", methods=["GET"])
+def terms_of_service():
+    html_content = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Terms of Service - Al Aqsa Computer</title>
+        <style>body { font-family: Arial, sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: auto; }</style>
+    </head>
+    <body>
+        <h1>Terms of Service</h1>
+        <p>Last updated: November 2026</p>
+        <p>By using the Al Aqsa Computer Automation bot on Facebook Messenger, you agree to the following terms and conditions.</p>
+        <h2>1. Services Provided</h2>
+        <p>Our bot provides information about our computer courses, pricing, admission procedures, and processes lead inquiries. We reserve the right to modify course fees, schedules, and policies without prior notice.</p>
+        <h2>2. User Conduct</h2>
+        <p>You agree to use this bot for lawful purposes only. You must not use the bot to send spam, abusive language, or false information. Any misuse may result in a block from our page.</p>
+        <h2>3. Payments and Refunds</h2>
+        <p>All course payments must be made through our official bKash/Nagad numbers. Admission is only confirmed upon verification of payment by our administration. Refund policies are strictly governed by our physical institution's rules and government free course guidelines.</p>
+        <h2>4. Automated Responses</h2>
+        <p>You acknowledge that you are interacting with an AI-powered bot. While we strive for accuracy, the bot may occasionally provide incorrect information. Final decisions regarding admissions and fees will be made by our human administrators.</p>
+        <h2>5. Contact Information</h2>
+        <p>For official inquiries, please contact:<br>
+        <strong>Phone:</strong> 01725259074<br>
+        <strong>Location:</strong> Notun Bus Terminal, Chakaria, Cox's Bazar.</p>
+    </body>
+    </html>
+    """
+    return html_content
+# ===== নতুন যোগ করা পেজগুলো শেষ =====
+
+
 # 1. Facebook Webhook Verification
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
