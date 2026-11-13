@@ -12,8 +12,10 @@ load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if GROQ_API_KEY:
     groq_client = Groq(api_key=GROQ_API_KEY)
+    print(f"✅ GROQ CLIENT INITIALIZED SUCCESSFULLY.")
 else:
     groq_client = None
+    print(f"❌ GROQ_API_KEY IS MISSING IN ENVIRONMENT VARIABLES!")
 
 # 2. Google Sheet Cloud Database URL
 GOOGLE_SHEET_WEBHOOK_URL = os.getenv("GOOGLE_SHEET_WEBHOOK_URL", "")
@@ -184,6 +186,8 @@ class AlAqsaAssistant:
             
             if "hi" in lower_text or "hello" in lower_text or "salam" in lower_text:
                 fallback_reply = "আসসালামু আলাইকুম! আল আকসা কম্পিউটারে আপনাকে স্বাগতম। আপনি কোন কোর্সটি সম্পর্কে জানতে চান? (কম্পিউটার, গ্রাফিক ডিজাইন, ফ্রিল্যান্সিং, ফরেক্স বা সরকারি ফ্রি কোর্স)"
+            elif any(w in lower_text for w in ["course ki", "course ache", "koto gulo course", "ki ki course", "কি কি কোর্স", "কোর্স কি"]):
+                fallback_reply = "আমাদের এখানে যে যে কোর্স আছে: ১. কম্পিউটার অফিস অ্যাপ্লিকেশন (৫,০০০ টাকা), ২. গ্রাফিক ডিজাইন (৬,৫০০ টাকা), ৩. সেলাই প্রশিক্ষণ (৪,৫০০ টাকা), ৪. ফ্রিল্যান্সিং (১৫,০০০ টাকা), ৫. ফরেক্স ট্রেডিং (১৫,০০০ টাকা) এবং ৬. সরকারি ফ্রি কোর্স (১০,০০০+ ভাতা)। আপনি কোন কোর্সটি সম্পর্কে বিস্তারিত জানতে চান?"
             elif state["course"] == "Govt Free Skill Development":
                 fallback_reply = "সরকারি ফ্রি কোর্সে ভর্তি চলছে! রেজিস্ট্রেশন ফি ১,৫০০ টাকা (ফেরতযোগ্য) এবং ফরম ফি ১০০ টাকা। কোর্স শেষে ১০,০০০+ টাকা ভাতা ও সার্টিফিকেট পাবেন। বিস্তারিত জানতে অফিসে আসুন।"
             else:
@@ -207,8 +211,9 @@ class AlAqsaAssistant:
                 )
                 if response.choices[0].message.content:
                     ai_reply = response.choices[0].message.content.strip()
+                    print(f"🤖 AI GENERATED REPLY: {ai_reply[:100]}...")
             except Exception as e:
-                print(f"Groq API Error (Using Smart Fallback): {e}")
+                print(f"❌ GROQ API ERROR (Using Smart Fallback): {e}")
 
         # 5. Sync updated state
         self.sync_to_crm(customer_id, name=customer_name, course=state["course"], bargain_step=state["step"], regular_fee=state["regular_fee"], offer_fee=state["step1_fee"], final_fee=state["final_fee"], has_chatted=True, status=f"Active Chat (Step {state['step']})")
@@ -216,9 +221,7 @@ class AlAqsaAssistant:
         return {"reply": ai_reply, "alert_admin": False}
 
     def analyze_payment_screenshot(self, image_bytes, mime_type="image/jpeg"):
-        # Groq standard API currently doesn't support image OCR easily, so using a safe fallback
         return "পেমেন্ট স্ক্রিনশটটি গ্রহণ করা হয়েছে। অ্যাডমিন যাচাই করে অল্প সময়ের মধ্যে কনফার্ম করবেন।"
 
     def handle_voice_message(self, customer_id, audio_bytes, mime_type="audio/ogg", customer_name="Student"):
-        # Groq standard API currently doesn't support audio easily, so using a safe fallback
         return {"reply": "ভাইয়া, ভয়েস মেসেজটি প্রসেস করার সিস্টেম আপাতত আপডেট হচ্ছে। অনুগ্রহ করে একটু লিখে বলবেন অথবা আপনার মোবাইল নম্বরটি দিন!", "alert_admin": False}
