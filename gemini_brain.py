@@ -176,7 +176,7 @@ class AlAqsaAssistant:
             active_fee = current_price_map.get(state["step"], state["final_fee"])
             bargain_instruction = f"বর্তমানে কাস্টমারের কোর্স: {state['course']}। যদি দাম জানতে চায় তবে {active_fee} টাকা বলবে।"
 
-        # 4. Generate Smart Response using Gemini 2.0 Flash
+        # 4. Generate Smart Response using Gemini 2.5 Flash
         ai_reply = "আসসালামু আলাইকুম! আল আকসা কম্পিউটারে আপনাকে স্বাগতম। আমাদের কম্পিউটার, গ্রাফিক ডিজাইন, ফ্রিল্যান্সিং, ফরেক্স এবং সরকারি ফ্রি কোর্সে ভর্তি চলছে। বিস্তারিত জানতে আপনার মোবাইল নম্বরটি দিন অথবা কল করুন: 01725259074।" # Fallback
         
         if client:
@@ -184,7 +184,7 @@ class AlAqsaAssistant:
                 prompt = f"কাস্টমারের নাম: {customer_name}\nকাস্টমারের মেসেজ: \"{text}\"\nতোমার জন্য বর্তমান নির্দেশনা: {bargain_instruction}\n\nউপরের নির্দেশনা মেনে কাস্টমারকে সরাসরি বাংলায় সুন্দর ও প্রফেশনাল উত্তর দাও:"
                 
                 response = client.models.generate_content(
-                    model='gemini-2.0-flash',
+                    model='gemini-2.5-flash',
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=MASTER_SYSTEM_PROMPT,
@@ -206,7 +206,7 @@ class AlAqsaAssistant:
         prompt = "এই ছবিটি কি বিকাশ (bKash) বা নগদ (Nagad) পেমেন্টের স্ক্রিনশট? যদি হয়, তবে ভেতর থেকে: ১. কত টাকা (Amount), ২. ট্রানজেকশন আইডি (TrxID), এবং ৩. প্রাপক নম্বর (01777109390 বা 01725259074 আছে কি না) তা বাংলায় সংক্ষেপে বের করে দাও। আর পেমেন্ট স্ক্রিনশট না হলে লেখো: 'এটি পেমেন্ট স্ক্রিনশট নয়'।"
         try:
             response = client.models.generate_content(
-                model='gemini-2.0-flash',
+                model='gemini-2.5-flash',
                 contents=[
                     prompt,
                     types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
@@ -221,7 +221,7 @@ class AlAqsaAssistant:
         try:
             transcribe_prompt = "এই অডিও মেসেজে কাস্টমার কী বলেছে তা হুবহু বাংলায় লিখে দাও।"
             response = client.models.generate_content(
-                model='gemini-2.0-flash',
+                model='gemini-2.5-flash',
                 contents=[
                     transcribe_prompt,
                     types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
