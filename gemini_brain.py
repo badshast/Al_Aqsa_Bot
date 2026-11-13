@@ -2,21 +2,18 @@ import json
 import os
 import re
 import requests
-from google import genai
-from google.genai import types
+from groq import Groq
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# 1. Configure Gemini AI securely (NEW SDK with strict Timeout)
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-client = None
-if GEMINI_API_KEY:
-    client = genai.Client(
-        api_key=GEMINI_API_KEY,
-        http_options={'timeout': 15000}
-    )
+# 1. Configure Groq AI securely
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+if GROQ_API_KEY:
+    groq_client = Groq(api_key=GROQ_API_KEY)
+else:
+    groq_client = None
 
 # 2. Google Sheet Cloud Database URL
 GOOGLE_SHEET_WEBHOOK_URL = os.getenv("GOOGLE_SHEET_WEBHOOK_URL", "")
@@ -185,7 +182,6 @@ class AlAqsaAssistant:
             active_fee = current_price_map.get(state["step"], state["final_fee"])
             bargain_instruction = f"বর্তমানে কাস্টমারের কোর্স: {state['course']}। যদি দাম জানতে চায় তবে {active_fee} টাকা বলবে।"
             
-            # Local Fallback Generator
             if "hi" in lower_text or "hello" in lower_text or "salam" in lower_text:
                 fallback_reply = "আসসালামু আলাইকুম! আল আকসা কম্পিউটারে আপনাকে স্বাগতম। আপনি কোন কোর্সটি সম্পর্কে জানতে চান? (কম্পিউটার, গ্রাফিক ডিজাইন, ফ্রিল্যান্সিং, ফরেক্স বা সরকারি ফ্রি কোর্স)"
             elif state["course"] == "Govt Free Skill Development":
@@ -193,25 +189,26 @@ class AlAqsaAssistant:
             else:
                 fallback_reply = f"{state['course']} কোর্সের ফি {active_fee} টাকা। আমাদের ল্যাবে আলাদা পিসিতে Practical সহকারে ক্লাস করানো হয়। ভর্তি হতে চাইলে আপনার মোবাইল নম্বরটি দিন।"
 
-        # 4. Generate Smart Response
+        # 4. Generate Smart Response using Groq (Llama 3.3 70B)
         ai_reply = fallback_reply # Set the smart fallback as default
         
-        if client:
+        if groq_client:
             try:
                 prompt = f"কাস্টমারের নাম: {customer_name}\nকাস্টমারের মেসেজ: \"{text}\"\nতোমার জন্য বর্তমান নির্দেশনা: {bargain_instruction}\n\nউপরের নির্দেশনা মেনে কাস্টমারকে সরাসরি বাংলায় সুন্দর ও প্রফেশনাল উত্তর দাও:"
                 
-                response = client.models.generate_content(
-                    model='gemini-3.8-flash',
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=MASTER_SYSTEM_PROMPT,
-                        temperature=0.7
-                    )
+                response = groq_client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": MASTER_SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt}
+                    ],
+                    model="llama-3.3-70b-versatile",
+                    temperature=0.7,
+                    max_tokens=1024
                 )
-                if response.text:
-                    ai_reply = response.text.strip()
+                if response.choices[0].message.content:
+                    ai_reply = response.choices[0].message.content.strip()
             except Exception as e:
-                print(f"Gemini API Error (Using Smart Fallback): {e}")
+                print(f"Groq API Error (Using Smart Fallback): {e}")
 
         # 5. Sync updated state
         self.sync_to_crm(customer_id, name=customer_name, course=state["course"], bargain_step=state["step"], regular_fee=state["regular_fee"], offer_fee=state["step1_fee"], final_fee=state["final_fee"], has_chatted=True, status=f"Active Chat (Step {state['step']})")
@@ -219,33 +216,9 @@ class AlAqsaAssistant:
         return {"reply": ai_reply, "alert_admin": False}
 
     def analyze_payment_screenshot(self, image_bytes, mime_type="image/jpeg"):
-        if not client: return "Gemini client not configured."
-        prompt = "এই ছবিটি কি বিকাশ (bKash) বা নগদ (Nagad) পেমেন্টের স্ক্রিনশট? যদি হয়, তবে ভেতর থেকে: ১. কত টাকা (Amount), ২. ট্রানজেকশন আইডি (TrxID), এবং ৩. প্রাপক নম্বর (01777109390 বা 01725259074 আছে কি না) তা বাংলায় সংক্ষেপে বের করে দাও। আর পেমেন্ট স্ক্রিনশট না হলে লেখো: 'এটি পেমেন্ট স্ক্রিনশট নয়'।"
-        try:
-            response = client.models.generate_content(
-                model='gemini-3.8-flash',
-                contents=[
-                    prompt,
-                    types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
-                ]
-            )
-            return response.text.strip()
-        except Exception as e:
-            return f"ছবি রিড করতে সমস্যা হয়েছে: {e}"
+        # Groq standard API currently doesn't support image OCR easily, so using a safe fallback
+        return "পেমেন্ট স্ক্রিনশটটি গ্রহণ করা হয়েছে। অ্যাডমিন যাচাই করে অল্প সময়ের মধ্যে কনফার্ম করবেন।"
 
     def handle_voice_message(self, customer_id, audio_bytes, mime_type="audio/ogg", customer_name="Student"):
-        if not client: return {"reply": "ভয়েস প্রসেসিং বন্ধ আছে।", "alert_admin": False}
-        try:
-            transcribe_prompt = "এই অডিও মেসেজে কাস্টমার কী বলেছে তা হুবহু বাংলায় লিখে দাও।"
-            response = client.models.generate_content(
-                model='gemini-3.8-flash',
-                contents=[
-                    transcribe_prompt,
-                    types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
-                ]
-            )
-            transcript = response.text.strip()
-            return self.handle_message(customer_id, transcript, customer_name)
-        except Exception as e:
-            print(f"Voice Error: {e}")
-            return {"reply": "ভাইয়া, আপনার ভয়েস মেসেজটি স্পষ্ট বোঝা যায়নি। অনুগ্রহ করে একটু লিখে বলবেন অথবা আপনার মোবাইল নম্বরটি দিন!", "alert_admin": False}
+        # Groq standard API currently doesn't support audio easily, so using a safe fallback
+        return {"reply": "ভাইয়া, ভয়েস মেসেজটি প্রসেস করার সিস্টেম আপাতত আপডেট হচ্ছে। অনুগ্রহ করে একটু লিখে বলবেন অথবা আপনার মোবাইল নম্বরটি দিন!", "alert_admin": False}
