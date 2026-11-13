@@ -9,18 +9,18 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# 1. Configure Gemini AI securely (NEW SDK)
+# 1. Configure Gemini AI securely (NEW SDK with strict Timeout)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+client = None
 if GEMINI_API_KEY:
-    client = genai.Client(api_key=GEMINI_API_KEY)
-else:
-    client = None
+    # Timeout set to 15 seconds (15000 ms) to prevent worker crashes
+    client = genai.Client(
+        api_key=GEMINI_API_KEY,
+        http_options={'timeout': 15000}
+    )
 
 # 2. Google Sheet Cloud Database URL
-GOOGLE_SHEET_WEBHOOK_URL = os.getenv(
-    "GOOGLE_SHEET_WEBHOOK_URL",
-    "https://script.googleusercontent.com/macros/echo?user_content_key=AUkAhnSGYPfqwVvHJObAJqSvGdJUAypVstMQ4pWUTnF9tlY_VUOeTHNTwPWEoFxAHbGOWY9wtmNrF-Wne7diHqfKD75dMzlQYmkDsoGcPd7xy4Nj58YWQQR-got41G6GewooI2T8fknAU__h90wf2K_sdSu-Sw-JKs085A7Xa9XfKFnZf3kcp_Lr_x8RM-rJJGDOtwcSW--sd4Bq69J73wKXTYXs56ehuD_0wFNMRCpP2eoHVCcwuK2-iSfTZ-3VmMGs-Nj4ORfSDlikN3x_hU5Rw7mdc3vAoQ&lib=M8Z7ms9C7gwd7yQ7wvKCVENyo-8z-9mm1"
-)
+GOOGLE_SHEET_WEBHOOK_URL = os.getenv("GOOGLE_SHEET_WEBHOOK_URL", "")
 
 MASTER_SYSTEM_PROMPT = """
 তুমি হলে "আল আকসা কম্পিউটার" (ঠিকানা: নতুন বাস টার্মিনাল, লামা-আলীকদম বাস কাউন্টারের পাশে, পুরাতন কমার্স কলেজের ২য় তলা, চকরিয়া, কক্সবাজার)-এর অফিশিয়াল এআই সেলস এক্সিকিউটিভ এবং বাদশাহ স্যারের পার্সোনাল অ্যাসিস্ট্যান্ট। প্রতিষ্ঠানের পরিচালক: মোহাম্মদ বাদশা মিয়া।
@@ -57,10 +57,12 @@ class AlAqsaAssistant:
         self.user_state = {}
 
     def sync_to_crm(self, customer_id, **kwargs):
+        if not GOOGLE_SHEET_WEBHOOK_URL:
+            return None # Skip if URL is empty to prevent hanging
         payload = {"action": "upsert_lead", "customer_id": str(customer_id)}
         payload.update(kwargs)
         try:
-            res = requests.post(GOOGLE_SHEET_WEBHOOK_URL, json=payload, timeout=10)
+            res = requests.post(GOOGLE_SHEET_WEBHOOK_URL, json=payload, timeout=5)
             if res.status_code == 200:
                 return res.json()
         except Exception as e:
@@ -72,29 +74,31 @@ class AlAqsaAssistant:
         if cid in self.user_state:
             return self.user_state[cid]
 
-        try:
-            res = requests.post(
-                GOOGLE_SHEET_WEBHOOK_URL,
-                json={"action": "get_customer", "customer_id": cid},
-                timeout=8
-            )
-            if res.status_code == 200:
-                data = res.json()
-                if data.get("found"):
-                    self.user_state[cid] = {
-                        "step": int(data.get("step", 0)),
-                        "course": data.get("course", "General Inquiry"),
-                        "regular_fee": int(data.get("regular_fee", 5000)),
-                        "step1_fee": int(data.get("offer_fee", 4500)),
-                        "step2_fee": int(data.get("step2_fee", 4000)),
-                        "final_fee": int(data.get("final_fee", 3500)),
-                        "phone": data.get("phone", None),
-                        "has_chatted": True,
-                        "status": data.get("status", "Active Chat")
-                    }
-                    return self.user_state[cid]
-        except Exception as e:
-            print(f"Cloud Fetch Warning: {e}")
+        # Skip cloud fetch if URL is empty to prevent hanging
+        if GOOGLE_SHEET_WEBHOOK_URL:
+            try:
+                res = requests.post(
+                    GOOGLE_SHEET_WEBHOOK_URL,
+                    json={"action": "get_customer", "customer_id": cid},
+                    timeout=5
+                )
+                if res.status_code == 200:
+                    data = res.json()
+                    if data.get("found"):
+                        self.user_state[cid] = {
+                            "step": int(data.get("step", 0)),
+                            "course": data.get("course", "General Inquiry"),
+                            "regular_fee": int(data.get("regular_fee", 5000)),
+                            "step1_fee": int(data.get("offer_fee", 4500)),
+                            "step2_fee": int(data.get("step2_fee", 4000)),
+                            "final_fee": int(data.get("final_fee", 3500)),
+                            "phone": data.get("phone", None),
+                            "has_chatted": True,
+                            "status": data.get("status", "Active Chat")
+                        }
+                        return self.user_state[cid]
+            except Exception as e:
+                print(f"Cloud Fetch Warning: {e}")
 
         self.user_state[cid] = {
             "step": 0,
@@ -116,7 +120,7 @@ class AlAqsaAssistant:
     def _detect_course_and_update_fees(self, text, state):
         t = text.lower()
         if state["course"] != "General Inquiry":
-            return # Don't reset if already in a course
+            return
 
         if any(w in t for w in ["freelanc", "ফ্রিল্যান্স", "আউটসোর্সিং", "digital marketing", "website", "hacking", "হ্যাকিং"]):
             state.update({"course": "Freelancing (6 Months)", "regular_fee": 15000, "step1_fee": 14000, "step2_fee": 13000, "final_fee": 12500, "step": 0})
@@ -176,15 +180,15 @@ class AlAqsaAssistant:
             active_fee = current_price_map.get(state["step"], state["final_fee"])
             bargain_instruction = f"বর্তমানে কাস্টমারের কোর্স: {state['course']}। যদি দাম জানতে চায় তবে {active_fee} টাকা বলবে।"
 
-        # 4. Generate Smart Response using Gemini 2.5 Flash
-        ai_reply = "আসসালামু আলাইকুম! আল আকসা কম্পিউটারে আপনাকে স্বাগতম। আমাদের কম্পিউটার, গ্রাফিক ডিজাইন, ফ্রিল্যান্সিং, ফরেক্স এবং সরকারি ফ্রি কোর্সে ভর্তি চলছে। বিস্তারিত জানতে আপনার মোবাইল নম্বরটি দিন অথবা কল করুন: 01725259074।" # Fallback
+        # 4. Generate Smart Response
+        ai_reply = "আসসালামু আলাইকুম! আল আকসা কম্পিউটারে আপনাকে স্বাগতম। আমাদের কম্পিউটার, গ্রাফিক ডিজাইন, ফ্রিল্যান্সিং, ফরেক্স এবং সরকারি ফ্রি কোর্সে ভর্তি চলছে। বিস্তারিত জানতে আপনার মোবাইল নম্বরটি দিন অথবা কল করুন: 01725259074।"
         
         if client:
             try:
                 prompt = f"কাস্টমারের নাম: {customer_name}\nকাস্টমারের মেসেজ: \"{text}\"\nতোমার জন্য বর্তমান নির্দেশনা: {bargain_instruction}\n\nউপরের নির্দেশনা মেনে কাস্টমারকে সরাসরি বাংলায় সুন্দর ও প্রফেশনাল উত্তর দাও:"
                 
                 response = client.models.generate_content(
-                    model='gemini-3.8-flash',
+                    model='gemini-2.0-flash',
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=MASTER_SYSTEM_PROMPT,
@@ -196,7 +200,7 @@ class AlAqsaAssistant:
             except Exception as e:
                 print(f"Gemini API Error: {e}")
 
-        # 5. Sync updated state to Google Sheets Cloud DB
+        # 5. Sync updated state
         self.sync_to_crm(customer_id, name=customer_name, course=state["course"], bargain_step=state["step"], regular_fee=state["regular_fee"], offer_fee=state["step1_fee"], final_fee=state["final_fee"], has_chatted=True, status=f"Active Chat (Step {state['step']})")
 
         return {"reply": ai_reply, "alert_admin": False}
@@ -206,7 +210,7 @@ class AlAqsaAssistant:
         prompt = "এই ছবিটি কি বিকাশ (bKash) বা নগদ (Nagad) পেমেন্টের স্ক্রিনশট? যদি হয়, তবে ভেতর থেকে: ১. কত টাকা (Amount), ২. ট্রানজেকশন আইডি (TrxID), এবং ৩. প্রাপক নম্বর (01777109390 বা 01725259074 আছে কি না) তা বাংলায় সংক্ষেপে বের করে দাও। আর পেমেন্ট স্ক্রিনশট না হলে লেখো: 'এটি পেমেন্ট স্ক্রিনশট নয়'।"
         try:
             response = client.models.generate_content(
-                model='gemini-3.8-flash',
+                model='gemini-2.0-flash',
                 contents=[
                     prompt,
                     types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
@@ -221,7 +225,7 @@ class AlAqsaAssistant:
         try:
             transcribe_prompt = "এই অডিও মেসেজে কাস্টমার কী বলেছে তা হুবহু বাংলায় লিখে দাও।"
             response = client.models.generate_content(
-                model='gemini-3.8-flash',
+                model='gemini-2.0-flash',
                 contents=[
                     transcribe_prompt,
                     types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
