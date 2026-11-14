@@ -205,7 +205,7 @@ class AlAqsaAssistant:
                         {"role": "system", "content": MASTER_SYSTEM_PROMPT},
                         {"role": "user", "content": prompt}
                     ],
-                    model="llama-3.1-8b-instant",
+                    model="openai/gpt-oss-120b",
                     temperature=0.7,
                     max_tokens=1024
                 )
