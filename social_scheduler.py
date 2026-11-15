@@ -12,7 +12,8 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 MONGO_URI = os.getenv("MONGO_URI")
-PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN")
+# এখানে নতুন টোকেনটি ব্যবহার করা হচ্ছে
+POST_ACCESS_TOKEN = os.getenv("POST_ACCESS_TOKEN") 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 PAGE_ID = "me"
@@ -40,11 +41,9 @@ def generate_post_for_approval():
         )
         post_text = response.choices[0].message.content.strip()
         
-        # ডাটাবেসে সেভ করা
         result = pending_posts_col.insert_one({"text": post_text, "status": "pending", "timestamp": time.time()})
         post_id = str(result.inserted_id)
         
-        # টেলিগ্রামে বাটনসহ পাঠানো
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
             "chat_id": ADMIN_CHAT_ID,
@@ -69,7 +68,9 @@ def approve_and_publish_post(post_id, chat_id, message_id):
     if post and post["status"] == "pending":
         post_text = post["text"]
         url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
-        payload = {"message": post_text, "access_token": PAGE_ACCESS_TOKEN}
+        
+        # এখানে POST_ACCESS_TOKEN ব্যবহার করা হচ্ছে
+        payload = {"message": post_text, "access_token": POST_ACCESS_TOKEN}
         res = requests.post(url, json=payload)
         
         if res.status_code == 200:
@@ -79,7 +80,6 @@ def approve_and_publish_post(post_id, chat_id, message_id):
             send_telegram_message(f"❌ ফেসবুকে পোস্ট করতে সমস্যা: {res.text}")
 
 def reject_post(post_id, chat_id, message_id):
-    """Reject করলে পোস্ট বাতিল করবে"""
     if pending_posts_col is None: return
     pending_posts_col.update_one({"_id": ObjectId(post_id)}, {"$set": {"status": "rejected"}})
     edit_telegram_message(chat_id, message_id, "❌ **পোস্টটি বাতিল করা হয়েছে।**")
