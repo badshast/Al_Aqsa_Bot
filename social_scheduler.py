@@ -47,7 +47,7 @@ def generate_post_for_approval():
         ভাষা হবে একদম সাবলীল, উৎসাহব্যঞ্জক এবং প্রফেশনাল বাংলা।"""
         
         response = gemini_client.models.generate_content(
-            model='gemini-1.5-flash-latest',
+            model='gemini-3.8-flash'
             contents=prompt,
             config=types.GenerateContentConfig(temperature=0.8)
         )
