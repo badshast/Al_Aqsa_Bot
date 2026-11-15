@@ -8,7 +8,6 @@ from bson.objectid import ObjectId
 
 load_dotenv()
 
-# 1. Configure Groq AI
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if GROQ_API_KEY:
     groq_client = Groq(api_key=GROQ_API_KEY)
@@ -29,43 +28,26 @@ else:
     pending_posts_col = None
 
 def generate_post_for_approval():
-    """Groq AI দিয়ে পোস্ট তৈরি করে টেলিগ্রামে পাঠাবে"""
-    print(">>> POST GENERATION STARTED (GROQ) <<<")
+    """শুধু টেক্সট পোস্ট তৈরি করে"""
     if not groq_client or pending_posts_col is None:
         send_telegram_message("❌ Groq বা MongoDB কানেক্টেড নেই।")
         return
-
     try:
-        prompt = """তুমি আল আকসা কম্পিউটার (চকরিয়া, কক্সবাজার)-এর একজন প্রফেশনাল কন্টেন্ট রাইটার। 
-        ফেসবুক পেজের জন্য একটি অত্যন্ত আকর্ষণীয় এবং প্রফেশনাল পোস্ট লিখো। 
-        পোস্টের বিষয়বস্তু: কম্পিউটার অফিস অ্যাপ্লিকেশন, গ্রাফিক ডিজাইন বা ফ্রিল্যান্সিং কোর্সের যেকোনো একটি।
-        পোস্টে অবশ্যই থাকতে হবে:
-        ১. একটি আকর্ষণীয় হুক (প্রথম লাইন)।
-        ২. কোর্সের সুবিধা (বুলেট পয়েন্টে)।
-        ৩. একটি শক্তিশালী Call to Action (যেমন: আজই ভর্তি হোন, সিট সীমিত)।
-        ৪. ৫টি রিলেভেন্ট হ্যাশট্যাগ। 
-        ভাষা হবে একদম সাবলীল, উৎসাহব্যঞ্জক এবং প্রফেশনাল বাংলা।"""
-        
-        print(">>> CALLING GROQ API <<<")
+        prompt = "তুমি আল আকসা কম্পিউটারের সেলস ম্যানেজার। ফেসবুক পেজের জন্য একটি আকর্ষণীয় পোস্ট লিখো। কম্পিউটার, গ্রাফিক ডিজাইন বা ফ্রিল্যান্সিং কোর্সের ওপর ২ প্যারাগ্রাফের পোস্ট হবে। সাথে ৫টি রিলেভেন্ট হ্যাশট্যাগ দাও। একদম প্রফেশনাল বাংলায় লিখবে।"
         response = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
-            model="openai/gpt-oss-120b", # Groq-এর সচল মডেল
-            temperature=0.7,
-            max_tokens=1024
+            model="openai/gpt-oss-120b",
+            temperature=0.7
         )
-        
         post_text = response.choices[0].message.content.strip()
-        print(f">>> GROQ REPLIED: {post_text[:50]}... <<<")
         
-        result = pending_posts_col.insert_one({"text": post_text, "status": "pending", "timestamp": time.time()})
+        result = pending_posts_col.insert_one({"text": post_text, "type": "text", "status": "pending", "timestamp": time.time()})
         post_id = str(result.inserted_id)
         
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        
-        # মার্কডাউন ছাড়া পাঠানো হচ্ছে যাতে AI-এর লেখা টেলিগ্রামে ব্লক না হয়
         payload = {
             "chat_id": ADMIN_CHAT_ID,
-            "text": f"📝 নতুন পোস্ট তৈরি হয়েছে:\n\n{post_text}",
+            "text": f"📝 নতুন টেক্সট পোস্ট:\n\n{post_text}",
             "reply_markup": {
                 "inline_keyboard": [[
                     {"text": "Approve ✅", "callback_data": f"approve_{post_id}"},
@@ -73,30 +55,79 @@ def generate_post_for_approval():
                 ]]
             }
         }
-        
-        print(">>> SENDING TO TELEGRAM <<<")
-        tg_res = requests.post(url, json=payload)
-        print(f">>> TELEGRAM RESPONSE: {tg_res.status_code} <<<")
-        
+        requests.post(url, json=payload)
     except Exception as e:
-        print(f"❌ ERROR IN GENERATION: {e}")
         send_telegram_message(f"❌ পোস্ট তৈরি করতে সমস্যা হয়েছে: {e}")
 
+def handle_telegram_photo(photo_file_id):
+    """টেলিগ্রামে ছবি পাঠালে এআই ক্যাপশন লিখে অ্যাপ্রুভালের জন্য পাঠাবে"""
+    if not groq_client or pending_posts_col is None: return
+    try:
+        prompt = "তুমি আল আকসা কম্পিউটারের সেলস ম্যানেজার। এই ছবির সাথে ফেসবুকের জন্য একটি আকর্ষণীয় ক্যাপশন লিখো। ছবিটি আল আকসা কম্পিউটারের একটি ডিজাইন। ২ প্যারাগ্রাফের পোস্ট হবে। সাথে ৫টি রিলেভেন্ট হ্যাশট্যাগ দাও। প্রফেশনাল বাংলায় লিখবে।"
+        response = groq_client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="openai/gpt-oss-120b",
+            temperature=0.7
+        )
+        caption = response.choices[0].message.content.strip()
+        
+        # ডাটাবেসে ছবির file_id এবং ক্যাপশন সেভ করা
+        result = pending_posts_col.insert_one({
+            "file_id": photo_file_id, 
+            "text": caption, 
+            "type": "photo", 
+            "status": "pending", 
+            "timestamp": time.time()
+        })
+        post_id = str(result.inserted_id)
+        
+        # টেলিগ্রামে ছবিসহ অ্যাপ্রুভাল বাটন পাঠানো
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+        payload = {
+            "chat_id": ADMIN_CHAT_ID,
+            "photo": photo_file_id,
+            "caption": caption[:1000], # টেলিগ্রাম ক্যাপশনে ১০২৪ অক্ষরের লিমিট থাকে
+            "reply_markup": {
+                "inline_keyboard": [[
+                    {"text": "Approve ✅", "callback_data": f"approve_{post_id}"},
+                    {"text": "Reject ❌", "callback_data": f"reject_{post_id}"}
+                ]]
+            }
+        }
+        requests.post(url, json=payload)
+        
+    except Exception as e:
+        send_telegram_message(f"❌ ছবির ক্যাপশন তৈরি করতে সমস্যা: {e}")
+
 def approve_and_publish_post(post_id, chat_id, message_id):
-    """Approve করলে ফেসবুকে পোস্ট করবে"""
     if pending_posts_col is None: return
     post = pending_posts_col.find_one({"_id": ObjectId(post_id)})
     
     if post and post["status"] == "pending":
         post_text = post["text"]
-        url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
         
-        payload = {"message": post_text, "access_token": POST_ACCESS_TOKEN}
-        res = requests.post(url, json=payload)
+        if post["type"] == "photo":
+            # ১. টেলিগ্রাম থেকে ছবিটি ডাউনলোড করা
+            file_id = post["file_id"]
+            file_res = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}").json()
+            file_path = file_res['result']['file_path']
+            img_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+            img_bytes = requests.get(img_url).content
+            
+            # ২. ফেসবুকে ছবিসহ পোস্ট করা
+            url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/photos"
+            payload = {"message": post_text, "access_token": POST_ACCESS_TOKEN}
+            files = {"source": ("image.jpg", img_bytes)}
+            res = requests.post(url, data=payload, files=files)
+        else:
+            # শুধু টেক্সট পোস্ট
+            url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
+            payload = {"message": post_text, "access_token": POST_ACCESS_TOKEN}
+            res = requests.post(url, json=payload)
         
         if res.status_code == 200:
             pending_posts_col.update_one({"_id": ObjectId(post_id)}, {"$set": {"status": "approved"}})
-            edit_telegram_message(chat_id, message_id, f"✅ পোস্ট সফলভাবে ফেসবুকে পাবলিশ হয়েছে!\n\n{post_text[:100]}...")
+            edit_telegram_message(chat_id, message_id, f"✅ পোস্ট সফলভাবে ফেসবুকে পাবলিশ হয়েছে!")
         else:
             send_telegram_message(f"❌ ফেসবুকে পোস্ট করতে সমস্যা: {res.text}")
 
