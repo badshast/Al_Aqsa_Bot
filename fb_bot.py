@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 from gemini_brain import AlAqsaAssistant
 import pymongo
 
-# --- নতুন ইমপোর্ট ---
 import social_scheduler 
 
 load_dotenv()
@@ -31,7 +30,8 @@ if MONGO_URI:
         print(f"❌ MONGODB CONNECTION ERROR: {e}")
         messages_col = None
 
-PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN")
+# মেসেজের জন্য পুরোনো টোকেন
+PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN") 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
@@ -52,9 +52,6 @@ def privacy_policy():
 def terms_of_service():
     return "<h1>Terms of Service</h1><p>By using this bot, you agree to our terms.</p>"
 
-# ==========================================
-# ফেসবুক Webhook
-# ==========================================
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
     mode = request.args.get("hub.mode")
@@ -108,9 +105,6 @@ def send_facebook_message(recipient_id, message_text):
     except Exception as e:
         print(f"❌ FB MSG ERROR: {e}")
 
-# ==========================================
-# টেলিগ্রাম Webhook (social_scheduler কে কল করবে)
-# ==========================================
 @app.route("/telegram_webhook", methods=["POST"])
 def telegram_webhook():
     data = request.get_json(force=True, silent=True) or {}
