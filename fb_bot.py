@@ -106,22 +106,33 @@ def telegram_webhook():
         
         if str(chat_id) == str(ADMIN_CHAT_ID):
             if text == "/start":
-                social_scheduler.send_telegram_message("আসসালামু আলাইকুম স্যার! পোস্ট তৈরি করতে `/newpost` দিন, অথবা সরাসরি ছবি/ফাইল পাঠান।")
+                social_scheduler.send_telegram_message("আসসালামু আলাইকুম স্যার! পোস্ট তৈরি করতে `/newpost` দিন, অথবা সরাসরি ছবি বা ভিডিও পাঠান।")
             elif text == "/newpost":
                 social_scheduler.send_telegram_message("⏳ স্যার, আমি এআই দিয়ে পোস্ট তৈরি করছি...")
                 threading.Thread(target=social_scheduler.generate_post_for_approval).start()
             
-            # ছবি রিসিভ (Photo or Document)
+            # ছবি রিসিভ
             elif "photo" in data["message"]:
                 photo_file_id = data["message"]["photo"][-1]["file_id"]
                 social_scheduler.send_telegram_message("⏳ স্যার, ছবিটি পেয়েছি...")
                 threading.Thread(target=social_scheduler.handle_telegram_photo, args=(photo_file_id,)).start()
+            
+            # ভিডিও রিসিভ
+            elif "video" in data["message"]:
+                video_file_id = data["message"]["video"]["file_id"]
+                social_scheduler.send_telegram_message("⏳ স্যার, ভিডিওটি পেয়েছি...")
+                threading.Thread(target=social_scheduler.handle_telegram_video, args=(video_file_id,)).start()
+            
+            # ডকুমেন্ট রিসিভ (ছবি বা ভিডিও)
             elif "document" in data["message"]:
                 doc = data["message"]["document"]
-                if "image" in doc.get("mime_type", ""):
-                    doc_file_id = doc["file_id"]
-                    social_scheduler.send_telegram_message("⏳ স্যার, ফাইলটি পেয়েছি...")
-                    threading.Thread(target=social_scheduler.handle_telegram_photo, args=(doc_file_id,)).start()
+                mime = doc.get("mime_type", "")
+                if "image" in mime:
+                    social_scheduler.send_telegram_message("⏳ স্যার, ইমেজ ফাইলটি পেয়েছি...")
+                    threading.Thread(target=social_scheduler.handle_telegram_photo, args=(doc["file_id"],)).start()
+                elif "video" in mime:
+                    social_scheduler.send_telegram_message("⏳ স্যার, ভিডিও ফাইলটি পেয়েছি...")
+                    threading.Thread(target=social_scheduler.handle_telegram_video, args=(doc["file_id"],)).start()
 
     elif "callback_query" in data:
         callback = data["callback_query"]
@@ -129,14 +140,18 @@ def telegram_webhook():
         message_id = callback["message"]["message_id"]
         callback_data = callback["data"]
         
+        # টেলিগ্রামের লোডিং স্পিনার বন্ধ করা
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery", json={"callback_query_id": callback["id"]})
         
         if str(chat_id) == str(ADMIN_CHAT_ID):
             if callback_data.startswith("approve_"):
                 post_id = callback_data.split("_")[1]
-                social_scheduler.approve_and_publish_post(post_id, chat_id, message_id)
+                # বাটন লুকানো (যাতে দ্বিতীয়বার ক্লিক না হয়)
+                social_scheduler.remove_telegram_buttons(chat_id, message_id)
+                threading.Thread(target=social_scheduler.approve_and_publish_post, args=(post_id, chat_id, message_id)).start()
             elif callback_data.startswith("reject_"):
                 post_id = callback_data.split("_")[1]
+                social_scheduler.remove_telegram_buttons(chat_id, message_id)
                 social_scheduler.reject_post(post_id, chat_id, message_id)
                 
     return {"ok": True}, 200
