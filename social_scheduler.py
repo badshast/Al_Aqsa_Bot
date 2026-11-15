@@ -53,7 +53,7 @@ def generate_post_for_approval():
 def handle_telegram_photo(photo_file_id):
     if not groq_client or pending_posts_col is None: return
     try:
-        prompt = "তুমি আল আকসা কম্পিউটারের সেলস ম্যানেজার। এই ছবির সাথে ফেসবুকের জন্য একটি আকর্ষণীয় ক্যাপশন লিখো। ছবিটি আল আকসা কম্পিউটারের একটি ডিজাইন। ২ প্যারাগ্রাফের পোস্ট হবে। সাথে ৫টি রিলেভেন্ট হ্যাশট্যাগ দাও। প্রফেশনাল বাংলায় লিখবে।"
+        prompt = "তুমি আল আকসা কম্পিউটারের সেলস ম্যানেজার। এই ছবির সাথে ফেসবুকের জন্য একটি আকর্ষণীয় ক্যাপশন লিখো। ২ প্যারাগ্রাফের পোস্ট হবে। সাথে ৫টি রিলেভেন্ট হ্যাশট্যাগ দাও। প্রফেশনাল বাংলায় লিখবে।"
         response = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
             model="openai/gpt-oss-120b",
@@ -75,58 +75,102 @@ def handle_telegram_photo(photo_file_id):
     except Exception as e:
         send_telegram_message(f"❌ ছবির ক্যাপশন তৈরি করতে সমস্যা: {e}")
 
+def handle_telegram_video(video_file_id):
+    if not groq_client or pending_posts_col is None: return
+    try:
+        prompt = "তুমি আল আকসা কম্পিউটারের সেলস ম্যানেজার। এই ভিডিওর সাথে ফেসবুকের জন্য একটি আকর্ষণীয় ক্যাপশন লিখো। ২ প্যারাগ্রাফের পোস্ট হবে। সাথে ৫টি রিলেভেন্ট হ্যাশট্যাগ দাও। প্রফেশনাল বাংলায় লিখবে।"
+        response = groq_client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="openai/gpt-oss-120b",
+            temperature=0.7
+        )
+        caption = response.choices[0].message.content.strip()
+        
+        result = pending_posts_col.insert_one({"file_id": video_file_id, "text": caption, "type": "video", "status": "pending", "timestamp": time.time()})
+        post_id = str(result.inserted_id)
+        
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
+        payload = {
+            "chat_id": ADMIN_CHAT_ID,
+            "video": video_file_id,
+            "caption": caption[:1000],
+            "reply_markup": {"inline_keyboard": [[{"text": "Approve ✅", "callback_data": f"approve_{post_id}"}, {"text": "Reject ❌", "callback_data": f"reject_{post_id}"}]]}
+        }
+        requests.post(url, json=payload)
+    except Exception as e:
+        send_telegram_message(f"❌ ভিডিওর ক্যাপশন তৈরি করতে সমস্যা: {e}")
+
+def remove_telegram_buttons(chat_id, message_id):
+    """টেলিগ্রাম থেকে বাটন সরিয়ে দেওয়া, যাতে দ্বিতীয়বার ক্লিক না করা যায়"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageReplyMarkup"
+    payload = {"chat_id": chat_id, "message_id": message_id}
+    requests.post(url, json=payload)
+
 def approve_and_publish_post(post_id, chat_id, message_id):
     if pending_posts_col is None: return
+    
+    # ডাবল ক্লিক প্রিভেন্ট (একবারে শুধু একটি রিকোয়েস্ট প্রসেস হবে)
+    result = pending_posts_col.update_one(
+        {"_id": ObjectId(post_id), "status": "pending"},
+        {"$set": {"status": "processing"}}
+    )
+    
+    if result.modified_count == 0:
+        send_telegram_message("⚠️ এই পোস্টটি ইতিমধ্যে প্রসেস করা হচ্ছে বা হয়ে গেছে।")
+        return
+
     post = pending_posts_col.find_one({"_id": ObjectId(post_id)})
     
-    if post and post["status"] == "pending":
+    if post:
         post_text = post["text"]
         
-        if post["type"] == "photo":
-            file_id = post["file_id"]
-            file_res = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}").json()
-            
-            if "result" not in file_res:
-                send_telegram_message("❌ টেলিগ্রাম থেকে ফাইলটি ডাউনলোড করা যাচ্ছে না।")
-                return
+        try:
+            if post["type"] == "photo":
+                file_id = post["file_id"]
+                file_res = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}").json()
+                file_path = file_res['result']['file_path']
+                img_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                img_bytes = requests.get(img_url).content
                 
-            file_path = file_res['result']['file_path']
-            img_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
-            img_bytes = requests.get(img_url).content
+                url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/photos"
+                payload = {"message": post_text, "access_token": POST_ACCESS_TOKEN}
+                files = {"source": ("image.jpg", img_bytes)}
+                res = requests.post(url, data=payload, files=files)
+                
+            elif post["type"] == "video":
+                file_id = post["file_id"]
+                file_res = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}").json()
+                file_path = file_res['result']['file_path']
+                vid_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                vid_bytes = requests.get(vid_url).content
+                
+                url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/videos"
+                payload = {"description": post_text, "access_token": POST_ACCESS_TOKEN}
+                files = {"source": ("video.mp4", vid_bytes)}
+                res = requests.post(url, data=payload, files=files)
+                
+            else:
+                url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
+                payload = {"message": post_text, "access_token": POST_ACCESS_TOKEN}
+                res = requests.post(url, json=payload)
             
-            url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/photos"
-            payload = {"message": post_text, "access_token": POST_ACCESS_TOKEN}
-            files = {"source": ("image.jpg", img_bytes)}
-            
-            print(">>> POSTING PHOTO TO FACEBOOK <<<")
-            res = requests.post(url, data=payload, files=files)
-            print(f">>> FB PHOTO RESPONSE: {res.status_code} - {res.text}")
-            
-        else:
-            url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
-            payload = {"message": post_text, "access_token": POST_ACCESS_TOKEN}
-            
-            print(">>> POSTING TEXT TO FACEBOOK <<<")
-            res = requests.post(url, json=payload)
-            print(f">>> FB TEXT RESPONSE: {res.status_code} - {res.text}")
-        
-        if res.status_code == 200:
-            pending_posts_col.update_one({"_id": ObjectId(post_id)}, {"$set": {"status": "approved"}})
-            edit_telegram_message(chat_id, message_id, f"✅ পোস্ট সফলভাবে ফেসবুকে পাবলিশ হয়েছে!")
-        else:
-            send_telegram_message(f"❌ ফেসবুক এরর: {res.text}")
+            if res.status_code == 200:
+                pending_posts_col.update_one({"_id": ObjectId(post_id)}, {"$set": {"status": "approved"}})
+                send_telegram_message(f"✅ **পোস্ট সফলভাবে ফেসবুকে পাবলিশ হয়েছে!**\n\n(পোস্ট আইডি: {res.json().get('id')})")
+            else:
+                pending_posts_col.update_one({"_id": ObjectId(post_id)}, {"$set": {"status": "failed"}})
+                send_telegram_message(f"❌ ফেসবুক এরর: {res.text}")
+                
+        except Exception as e:
+            pending_posts_col.update_one({"_id": ObjectId(post_id)}, {"$set": {"status": "failed"}})
+            send_telegram_message(f"❌ কোডের ভেতরে এরর: {e}")
 
 def reject_post(post_id, chat_id, message_id):
     if pending_posts_col is None: return
     pending_posts_col.update_one({"_id": ObjectId(post_id)}, {"$set": {"status": "rejected"}})
-    edit_telegram_message(chat_id, message_id, "❌ পোস্টটি বাতিল করা হয়েছে।")
-
-def edit_telegram_message(chat_id, message_id, new_text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageText"
-    payload = {"chat_id": chat_id, "message_id": message_id, "text": new_text}
-    requests.post(url, json=payload)
+    send_telegram_message("❌ পোস্টটি বাতিল করা হয়েছে।")
 
 def send_telegram_message(message_text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": ADMIN_CHAT_ID, "text": message_text}
+    payload = {"chat_id": ADMIN_CHAT_ID, "text": message_text, "parse_mode": "Markdown"}
     requests.post(url, json=payload)
