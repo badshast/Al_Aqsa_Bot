@@ -7,11 +7,8 @@ import requests
 from dotenv import load_dotenv
 from gemini_brain import AlAqsaAssistant
 import pymongo
-
-# সোশ্যাল শিডিউলার থেকে ফাংশনগুলো কল করার জন্য
 import social_scheduler
 
-# Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
@@ -19,10 +16,8 @@ import logging
 logging.basicConfig(level=logging.INFO)
 print('=== BOT STARTED ===')
 
-# Initialize AI Brain
 ai_brain = AlAqsaAssistant()
 
-# MongoDB Connection
 MONGO_URI = os.getenv("MONGO_URI")
 if MONGO_URI:
     try:
@@ -34,7 +29,6 @@ if MONGO_URI:
         print(f"❌ MONGODB CONNECTION ERROR: {e}")
         messages_col = None
 
-# Secure Tokens
 PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -48,17 +42,6 @@ def home():
 def health():
     return "OK", 200
 
-@app.route("/privacy-policy", methods=["GET"])
-def privacy_policy():
-    return "<h1>Privacy Policy</h1><p>This is the privacy policy for Al Aqsa Bot.</p>"
-
-@app.route("/terms-of-service", methods=["GET"])
-def terms_of_service():
-    return "<h1>Terms of Service</h1><p>By using this bot, you agree to our terms.</p>"
-
-# ==========================================
-# ফেসবুক Webhook (মেসেজ ও কমেন্ট রিসিভ করার জন্য)
-# ==========================================
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
     mode = request.args.get("hub.mode")
@@ -72,7 +55,6 @@ def verify_webhook():
 @app.route("/webhook", methods=["POST"])
 def handle_webhook():
     data = request.get_json(force=True, silent=True) or {}
-    # ফেসবুককে সাথে সাথে ২০০ রেসপন্স দেওয়া (Threading)
     threading.Thread(target=process_webhook_data, args=(data,)).start()
     return "EVENT_RECEIVED", 200
 
@@ -82,18 +64,13 @@ def process_webhook_data(data):
             for entry in data.get("entry", []):
                 messaging_events = entry.get("messaging", [])
                 for event in messaging_events:
-                    if event.get("message", {}).get("is_echo"):
-                        continue
-                    
+                    if event.get("message", {}).get("is_echo"): continue
                     sender_id = event["sender"]["id"]
                     
-                    # ডুপ্লিকেট মেসেজ চেক
                     mid = event.get("message", {}).get("mid")
                     if mid and messages_col is not None:
-                        if messages_col.find_one({"mid": mid}):
-                            continue
-                        else:
-                            messages_col.insert_one({"mid": mid, "timestamp": time.time()})
+                        if messages_col.find_one({"mid": mid}): continue
+                        else: messages_col.insert_one({"mid": mid, "timestamp": time.time()})
 
                     if "message" in event and "text" in event["message"]:
                         process_facebook_text(sender_id, event["message"]["text"])
@@ -105,7 +82,6 @@ def process_facebook_text(sender_id, text):
         result = ai_brain.handle_message(sender_id, text, "Student")
         send_facebook_message(sender_id, result["reply"])
         
-        # লিড অ্যালার্ট টেলিগ্রামে পাঠানো
         if result.get("alert_admin") and result.get("alert_type") == "BARGAIN_LEAD":
             msg = f"🚨 **নতুন লিড অ্যালার্ট!**\n\n📞 **নম্বর:** `{result['phone']}`\n📘 **কোর্স:** {result['course']}\n💬 শেষ দাম: **{result['final_fee']} টাকা**"
             social_scheduler.send_telegram_message(msg)
@@ -120,39 +96,39 @@ def send_facebook_message(recipient_id, message_text):
     except Exception as e:
         print(f"❌ FB MSG ERROR: {e}")
 
-# ==========================================
-# টেলিগ্রাম Webhook (কমান্ড, ছবি, Approve/Reject)
-# ==========================================
 @app.route("/telegram_webhook", methods=["POST"])
 def telegram_webhook():
     data = request.get_json(force=True, silent=True) or {}
     
-    # ১. মেসেজ বা ছবি রিসিভ করা
     if "message" in data:
         chat_id = data["message"]["chat"]["id"]
         text = data["message"].get("text", "")
         
         if str(chat_id) == str(ADMIN_CHAT_ID):
             if text == "/start":
-                social_scheduler.send_telegram_message("আসসালামু আলাইকুম স্যার! পোস্ট তৈরি করতে `/newpost` কমান্ড দিন, অথবা সরাসরি একটি ছবি পাঠান।")
+                social_scheduler.send_telegram_message("আসসালামু আলাইকুম স্যার! পোস্ট তৈরি করতে `/newpost` দিন, অথবা সরাসরি ছবি/ফাইল পাঠান।")
             elif text == "/newpost":
-                social_scheduler.send_telegram_message("⏳ স্যার, আমি এআই দিয়ে একটি নতুন পোস্ট তৈরি করছি...")
+                social_scheduler.send_telegram_message("⏳ স্যার, আমি এআই দিয়ে পোস্ট তৈরি করছি...")
                 threading.Thread(target=social_scheduler.generate_post_for_approval).start()
             
-            # ছবি রিসিভ করা
+            # ছবি রিসিভ (Photo or Document)
             elif "photo" in data["message"]:
                 photo_file_id = data["message"]["photo"][-1]["file_id"]
-                social_scheduler.send_telegram_message("⏳ স্যার, ছবিটি পেয়েছি। এআই ক্যাপশন লিখছে...")
+                social_scheduler.send_telegram_message("⏳ স্যার, ছবিটি পেয়েছি...")
                 threading.Thread(target=social_scheduler.handle_telegram_photo, args=(photo_file_id,)).start()
-                
-    # ২. অ্যাপ্রুভাল বাটন (Approve/Reject) হ্যান্ডেল করা
+            elif "document" in data["message"]:
+                doc = data["message"]["document"]
+                if "image" in doc.get("mime_type", ""):
+                    doc_file_id = doc["file_id"]
+                    social_scheduler.send_telegram_message("⏳ স্যার, ফাইলটি পেয়েছি...")
+                    threading.Thread(target=social_scheduler.handle_telegram_photo, args=(doc_file_id,)).start()
+
     elif "callback_query" in data:
         callback = data["callback_query"]
         chat_id = callback["message"]["chat"]["id"]
         message_id = callback["message"]["message_id"]
         callback_data = callback["data"]
         
-        # টেলিগ্রামের লোডিং স্পিনার বন্ধ করা
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery", json={"callback_query_id": callback["id"]})
         
         if str(chat_id) == str(ADMIN_CHAT_ID):
