@@ -163,7 +163,7 @@ def process_webhook_data(data):
                 
                 # ২. ডুপ্লিকেট মেসেজ চেক (MongoDB)
                 mid = event.get("message", {}).get("mid")
-                                if mid and messages_col is not None:
+                if mid and messages_col is not None:
                     if messages_col.find_one({"mid": mid}):
                         print(f"Duplicate message ignored: {mid}")
                         continue
