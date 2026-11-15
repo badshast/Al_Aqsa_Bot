@@ -20,11 +20,10 @@ print('=== BOT STARTED === PAGE_TOKEN SET:', bool(os.getenv('PAGE_ACCESS_TOKEN')
 # Initialize AI Brain
 ai_brain = AlAqsaAssistant()
 
-# MongoDB Connection with Timeout
+# MongoDB Connection
 MONGO_URI = os.getenv("MONGO_URI")
 if MONGO_URI:
     try:
-        # ৫ সেকেন্ডের মধ্যে কানেক্ট না হলে এরর দেবে, হ্যাং করবে না
         mongo_client = pymongo.MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
         db = mongo_client.get_database("alaqsa_db")
         messages_col = db.get_collection("processed_messages")
@@ -58,6 +57,9 @@ def privacy_policy():
 def terms_of_service():
     return "<h1>Terms of Service</h1><p>By using this bot, you agree to our terms.</p>"
 
+# ==========================================
+# ফেসবুক Webhook (মেসেজ রিসিভ করার জন্য)
+# ==========================================
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
     mode = request.args.get("hub.mode")
@@ -74,7 +76,7 @@ def verify_webhook():
 @app.route("/webhook", methods=["POST"])
 def handle_webhook():
     data = request.get_json(force=True, silent=True) or {}
-    # ফেসবুককে সাথে সাথে ২০০ রেসপন্স দেওয়া
+    # ফেসবুককে সাথে সাথে ২০০ রেসপন্স দেওয়া (Threading)
     threading.Thread(target=process_webhook_data, args=(data,)).start()
     return "EVENT_RECEIVED", 200
 
@@ -86,7 +88,6 @@ def process_webhook_data(data):
                 # A. Handle Messenger Inbox Messages
                 messaging_events = entry.get("messaging", [])
                 for event in messaging_events:
-                    # বটের নিজের পাঠানো মেসেজ ইগনোর করা (is_echo)
                     if event.get("message", {}).get("is_echo"):
                         continue
 
@@ -113,7 +114,6 @@ def process_webhook_data(data):
                         if val.get("verb") == "add":
                             commenter_id = val.get("from", {}).get("id")
                             commenter_name = val.get("from", {}).get("name", "Student")
-                            # নিজের পেজের কমেন্ট ইগনোর করা
                             if commenter_id != entry.get("id"): 
                                 ai_brain.sync_to_crm(commenter_id, name=commenter_name, status="Commented on Post")
                                 if not ai_brain.has_chatted_before(commenter_id):
@@ -128,6 +128,7 @@ def process_facebook_text(sender_id, text):
         print(f"🤖 AI REPLY GENERATED: {result['reply'][:50]}...")
         send_facebook_message(sender_id, result["reply"])
         
+        # ফোন নম্বর দিলে বা বার্গেনিং লিড হলে টেলিগ্রামে অ্যালার্ট
         if result.get("alert_admin") and result.get("alert_type") == "BARGAIN_LEAD":
             send_telegram_bargain_alert(sender_id, result["phone"], result["course"], result["final_fee"])
     except Exception as e:
@@ -143,11 +144,38 @@ def send_facebook_message(recipient_id, message_text):
     except Exception as e:
         print(f"❌ FB API ERROR: {e}")
 
-def send_telegram_bargain_alert(customer_id, phone, course, final_fee):
+# ==========================================
+# টেলিগ্রাম Webhook (কমান্ড ও অ্যাপ্রুভাল রিসিভ করার জন্য)
+# ==========================================
+@app.route("/telegram_webhook", methods=["POST"])
+def telegram_webhook():
+    data = request.get_json(force=True, silent=True) or {}
+    
+    # আমরা শুধু মেসেজ বা কলব্যাক কুয়েরি চেক করব
+    if "message" in data:
+        chat_id = data["message"]["chat"]["id"]
+        text = data["message"].get("text", "")
+        
+        # চেক করা: মেসেজটি কি আমাদের অ্যাডমিন পাঠিয়েছে?
+        if str(chat_id) == str(ADMIN_CHAT_ID):
+            if text == "/start":
+                send_telegram_message("আসসালামু আলাইকুম স্যার! আমি আল আকসা বট। এখন থেকে নতুন লিড বা পোস্টের আপডেট এখানে পাবেন।")
+            elif text == "/ping":
+                send_telegram_message("✅ আলহামদুলিল্লাহ, বট ঠিকমতো কাজ করছে।")
+                
+    return {"ok": True}, 200
+
+def send_telegram_message(message_text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    msg = f"🚨 **নতুন ডিসকাউন্ট ও লিড অ্যালার্ট!**\n\n📞 **নম্বর:** `{phone}`\n📘 **কোর্স:** {course}\n💬 বটম-লাইন ফি: **{final_fee} টাকা**।"
-    payload = {"chat_id": ADMIN_CHAT_ID, "text": msg, "parse_mode": "Markdown"}
-    requests.post(url, json=payload)
+    payload = {"chat_id": ADMIN_CHAT_ID, "text": message_text, "parse_mode": "Markdown"}
+    try:
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print(f"Telegram API Error: {e}")
+
+def send_telegram_bargain_alert(customer_id, phone, course, final_fee):
+    msg = f"🚨 **নতুন লিড অ্যালার্ট!**\n\n📞 **নম্বর:** `{phone}`\n📘 **কোর্স:** {course}\n💬 শেষ দাম: **{final_fee} টাকা**\n\nস্যার, কাস্টমারের সাথে কথা বলুন।"
+    send_telegram_message(msg)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
