@@ -20,11 +20,12 @@ print('=== BOT STARTED === PAGE_TOKEN SET:', bool(os.getenv('PAGE_ACCESS_TOKEN')
 # Initialize AI Brain
 ai_brain = AlAqsaAssistant()
 
-# MongoDB Connection
+# MongoDB Connection with Timeout
 MONGO_URI = os.getenv("MONGO_URI")
 if MONGO_URI:
     try:
-        mongo_client = pymongo.MongoClient(MONGO_URI)
+        # ৫ সেকেন্ডের মধ্যে কানেক্ট না হলে এরর দেবে, হ্যাং করবে না
+        mongo_client = pymongo.MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
         db = mongo_client.get_database("alaqsa_db")
         messages_col = db.get_collection("processed_messages")
         print("✅ MONGODB CONNECTED SUCCESSFULLY.")
@@ -72,42 +73,36 @@ def verify_webhook():
 
 @app.route("/webhook", methods=["POST"])
 def handle_webhook():
-    print(">>> WEBHOOK HIT RECEIVED <<<")
     data = request.get_json(force=True, silent=True) or {}
-    print(">>> RAW DATA:", str(data)[:200]) # লগে ডাটা দেখার জন্য
-    
-    # রেসপন্স ইনস্ট্যান্ট পাঠানোর জন্য থ্রেড ব্যবহার
+    # ফেসবুককে সাথে সাথে ২০০ রেসপন্স দেওয়া
     threading.Thread(target=process_webhook_data, args=(data,)).start()
-    
     return "EVENT_RECEIVED", 200
 
 def process_webhook_data(data):
     try:
         if data.get("object") == "page":
             for entry in data.get("entry", []):
+                
                 # A. Handle Messenger Inbox Messages
                 messaging_events = entry.get("messaging", [])
                 for event in messaging_events:
-                    print(">>> PROCESSING EVENT:", event.get("message", {}).get("text", "Attachment"))
-                    
+                    # বটের নিজের পাঠানো মেসেজ ইগনোর করা (is_echo)
                     if event.get("message", {}).get("is_echo"):
-                        print(">>> BOT ECHO SKIPPED")
                         continue
 
                     sender_id = event["sender"]["id"]
                     
-                    # ২. ডুপ্লিকেট মেসেজ চেক (MongoDB)
+                    # ডুপ্লিকেট মেসেজ চেক (MongoDB)
                     mid = event.get("message", {}).get("mid")
                     if mid and messages_col is not None:
                         if messages_col.find_one({"mid": mid}):
-                            print(f">>> DUPLICATE MSG IGNORED: {mid}")
+                            print(f"Duplicate message ignored: {mid}")
                             continue
                         else:
                             messages_col.insert_one({"mid": mid, "timestamp": time.time()})
 
                     if "message" in event and "text" in event["message"]:
                         user_message = event["message"]["text"]
-                        print(f">>> CALLING AI FOR MSG: {user_message}")
                         process_facebook_text(sender_id, user_message)
 
                 # B. Handle Page Comments (Smart Lead Hunter)
@@ -118,7 +113,8 @@ def process_webhook_data(data):
                         if val.get("verb") == "add":
                             commenter_id = val.get("from", {}).get("id")
                             commenter_name = val.get("from", {}).get("name", "Student")
-                            if commenter_id != entry.get("id"): # নিজের কমেন্ট ইগনোর
+                            # নিজের পেজের কমেন্ট ইগনোর করা
+                            if commenter_id != entry.get("id"): 
                                 ai_brain.sync_to_crm(commenter_id, name=commenter_name, status="Commented on Post")
                                 if not ai_brain.has_chatted_before(commenter_id):
                                     outreach_msg = f"আসসালামু আলাইকুম {commenter_name} ভাইয়া! আল আকসা কম্পিউটার পেজে আপনার কমেন্টটি দেখলাম। আমাদের কোর্সে ভর্তি চলছে। আপনি কোন কোর্সটি সম্পর্কে জানতে চান?"
@@ -129,7 +125,7 @@ def process_webhook_data(data):
 def process_facebook_text(sender_id, text):
     try:
         result = ai_brain.handle_message(sender_id, text, "Student")
-        print(f">>> AI REPLY GENERATED: {result['reply'][:50]}...")
+        print(f"🤖 AI REPLY GENERATED: {result['reply'][:50]}...")
         send_facebook_message(sender_id, result["reply"])
         
         if result.get("alert_admin") and result.get("alert_type") == "BARGAIN_LEAD":
@@ -143,7 +139,7 @@ def send_facebook_message(recipient_id, message_text):
     headers = {"Content-Type": "application/json"}
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
-        print(f"✅ FB API RESPONSE: {response.status_code} - {response.text}")
+        print(f"✅ FB API RESPONSE: {response.status_code}")
     except Exception as e:
         print(f"❌ FB API ERROR: {e}")
 
