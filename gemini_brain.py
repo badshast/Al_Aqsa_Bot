@@ -2,21 +2,16 @@ import json
 import os
 import re
 import time
+import io
 from groq import Groq
 from dotenv import load_dotenv
 import pymongo
 
-# Load environment variables
 load_dotenv()
 
-# 1. Configure Groq AI
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-if GROQ_API_KEY:
-    groq_client = Groq(api_key=GROQ_API_KEY)
-else:
-    groq_client = None
+groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
-# 2. MongoDB Connection with Timeout
 MONGO_URI = os.getenv("MONGO_URI")
 if MONGO_URI:
     try:
@@ -100,7 +95,8 @@ class AlAqsaAssistant:
                         "final_fee": int(data.get("final_fee", 3500)),
                         "phone": data.get("phone", None),
                         "has_chatted": True,
-                        "status": data.get("status", "Active Chat")
+                        "status": data.get("status", "Active Chat"),
+                        "bot_paused_until": data.get("bot_paused_until", 0) # পজ টাইম লোড করা
                     }
                     return self.user_state[cid]
             except Exception as e:
@@ -109,9 +105,26 @@ class AlAqsaAssistant:
         self.user_state[cid] = {
             "step": 0, "course": "General Inquiry",
             "regular_fee": 5000, "step1_fee": 4500, "step2_fee": 4000, "final_fee": 3500,
-            "phone": None, "has_chatted": False, "status": "New Lead"
+            "phone": None, "has_chatted": False, "status": "New Lead", "bot_paused_until": 0
         }
         return self.user_state[cid]
+
+    def transcribe_audio(self, audio_bytes, mime_type="audio/mp4"):
+        """Groq Whisper ব্যবহার করে ভয়েস থেকে টেক্সট বের করা"""
+        if not groq_client:
+            return None
+        try:
+            # Groq-তে পাঠানোর জন্য ফাইল টাপল তৈরি
+            file_tuple = ("audio.mp4", audio_bytes, mime_type)
+            transcription = groq_client.audio.transcriptions.create(
+                file=file_tuple,
+                model="whisper-large-v3",
+                prompt="আল আকসা কম্পিউটার, কোর্স, ভর্তি, ফি" # বাংলা শব্দগুলোর নির্ভুলতার জন্য
+            )
+            return transcription.text.strip()
+        except Exception as e:
+            print(f"❌ Transcription Error: {e}")
+            return None
 
     def has_chatted_before(self, customer_id):
         state = self.get_user_state(customer_id)
@@ -140,6 +153,11 @@ class AlAqsaAssistant:
         lower_text = text.lower()
         state = self.get_user_state(customer_id, customer_name)
         state["has_chatted"] = True
+
+        # স্যার রিপ্লাই দিলে বট পজ থাকবে (Owner Takeover Check)
+        if state.get("bot_paused_until", 0) > time.time():
+            print(f"🤫 বট পজ করা আছে কাস্টমার {customer_id}-এর জন্য।")
+            return {"reply": None, "alert_admin": False}
 
         # 1. Phone Number Detection
         phone_match = re.search(r"01[3-9]\d{8}", lower_text)
@@ -213,13 +231,7 @@ class AlAqsaAssistant:
             except Exception as e:
                 print(f"Groq API Error: {e}")
 
-        # 5. Sync state to MongoDB
+        # 5. Sync state to MongoDB (পজ টাইম সহ)
         self.sync_to_crm(customer_id, name=customer_name, course=state["course"], step=state["step"], regular_fee=state["regular_fee"], step1_fee=state["step1_fee"], step2_fee=state["step2_fee"], final_fee=state["final_fee"], has_chatted=True, status=f"Active Chat (Step {state['step']})")
 
         return {"reply": ai_reply, "alert_admin": False}
-
-    def analyze_payment_screenshot(self, image_bytes, mime_type="image/jpeg"):
-        return "পেমেন্ট স্ক্রিনশটটি গ্রহণ করা হয়েছে। অ্যাডমিন যাচাই করে কনফার্ম করবেন।"
-
-    def handle_voice_message(self, customer_id, audio_bytes, mime_type="audio/ogg", customer_name="Student"):
-        return {"reply": "ভাইয়া, ভয়েস মেসেজ প্রসেস করার সিস্টেম আপডেট হচ্ছে। একটু লিখে বলবেন?", "alert_admin": False}
