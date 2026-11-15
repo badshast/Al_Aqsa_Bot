@@ -1,23 +1,19 @@
 import os
 import requests
 import time
-from google import genai
-from google.genai import types
+from groq import Groq
 from dotenv import load_dotenv
 import pymongo
 from bson.objectid import ObjectId
 
 load_dotenv()
 
-# 1. Configure Gemini AI (With 15 seconds timeout to prevent hanging)
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    gemini_client = genai.Client(
-        api_key=GEMINI_API_KEY,
-        http_options={'timeout': 15000} # ১৫ সেকেন্ড পর বন্ধ হয়ে যাবে
-    )
+# 1. Configure Groq AI
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+if GROQ_API_KEY:
+    groq_client = Groq(api_key=GROQ_API_KEY)
 else:
-    gemini_client = None
+    groq_client = None
 
 MONGO_URI = os.getenv("MONGO_URI")
 POST_ACCESS_TOKEN = os.getenv("POST_ACCESS_TOKEN") 
@@ -33,10 +29,10 @@ else:
     pending_posts_col = None
 
 def generate_post_for_approval():
-    """Gemini AI দিয়ে পোস্ট তৈরি করে টেলিগ্রামে পাঠাবে"""
-    print(">>> POST GENERATION STARTED <<<")
-    if not gemini_client or pending_posts_col is None:
-        send_telegram_message("❌ Gemini বা MongoDB কানেক্টেড নেই।")
+    """Groq AI দিয়ে পোস্ট তৈরি করে টেলিগ্রামে পাঠাবে"""
+    print(">>> POST GENERATION STARTED (GROQ) <<<")
+    if not groq_client or pending_posts_col is None:
+        send_telegram_message("❌ Groq বা MongoDB কানেক্টেড নেই।")
         return
 
     try:
@@ -50,24 +46,26 @@ def generate_post_for_approval():
         ৪. ৫টি রিলেভেন্ট হ্যাশট্যাগ। 
         ভাষা হবে একদম সাবলীল, উৎসাহব্যঞ্জক এবং প্রফেশনাল বাংলা।"""
         
-        print(">>> CALLING GEMINI API <<<")
-        response = gemini_client.models.generate_content(
-            model='gemini-2.0-flash', # যদি এরর দেয় তবে 'gemini-1.5-flash-latest' করে দেখবেন
-            contents=prompt,
-            config=types.GenerateContentConfig(temperature=0.8)
+        print(">>> CALLING GROQ API <<<")
+        response = groq_client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="openai/gpt-oss-120b", # Groq-এর সচল মডেল
+            temperature=0.7,
+            max_tokens=1024
         )
         
-        post_text = response.text.strip()
-        print(f">>> GEMINI REPLIED: {post_text[:50]}... <<<")
+        post_text = response.choices[0].message.content.strip()
+        print(f">>> GROQ REPLIED: {post_text[:50]}... <<<")
         
         result = pending_posts_col.insert_one({"text": post_text, "status": "pending", "timestamp": time.time()})
         post_id = str(result.inserted_id)
         
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         
+        # মার্কডাউন ছাড়া পাঠানো হচ্ছে যাতে AI-এর লেখা টেলিগ্রামে ব্লক না হয়
         payload = {
             "chat_id": ADMIN_CHAT_ID,
-            "text": f"📝 নতুন পোস্ট তৈরি হয়েছে (Gemini AI):\n\n{post_text}",
+            "text": f"📝 নতুন পোস্ট তৈরি হয়েছে:\n\n{post_text}",
             "reply_markup": {
                 "inline_keyboard": [[
                     {"text": "Approve ✅", "callback_data": f"approve_{post_id}"},
@@ -78,36 +76,38 @@ def generate_post_for_approval():
         
         print(">>> SENDING TO TELEGRAM <<<")
         tg_res = requests.post(url, json=payload)
-        print(f">>> TELEGRAM RESPONSE: {tg_res.status_code} - {tg_res.text} <<<")
+        print(f">>> TELEGRAM RESPONSE: {tg_res.status_code} <<<")
         
     except Exception as e:
         print(f"❌ ERROR IN GENERATION: {e}")
         send_telegram_message(f"❌ পোস্ট তৈরি করতে সমস্যা হয়েছে: {e}")
 
 def approve_and_publish_post(post_id, chat_id, message_id):
+    """Approve করলে ফেসবুকে পোস্ট করবে"""
     if pending_posts_col is None: return
     post = pending_posts_col.find_one({"_id": ObjectId(post_id)})
     
     if post and post["status"] == "pending":
         post_text = post["text"]
         url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
+        
         payload = {"message": post_text, "access_token": POST_ACCESS_TOKEN}
         res = requests.post(url, json=payload)
         
         if res.status_code == 200:
             pending_posts_col.update_one({"_id": ObjectId(post_id)}, {"$set": {"status": "approved"}})
-            edit_telegram_message(chat_id, message_id, f"✅ **পোস্ট সফলভাবে ফেসবুকে পাবলিশ হয়েছে!**\n\n{post_text[:100]}...")
+            edit_telegram_message(chat_id, message_id, f"✅ পোস্ট সফলভাবে ফেসবুকে পাবলিশ হয়েছে!\n\n{post_text[:100]}...")
         else:
             send_telegram_message(f"❌ ফেসবুকে পোস্ট করতে সমস্যা: {res.text}")
 
 def reject_post(post_id, chat_id, message_id):
     if pending_posts_col is None: return
     pending_posts_col.update_one({"_id": ObjectId(post_id)}, {"$set": {"status": "rejected"}})
-    edit_telegram_message(chat_id, message_id, "❌ **পোস্টটি বাতিল করা হয়েছে।**")
+    edit_telegram_message(chat_id, message_id, "❌ পোস্টটি বাতিল করা হয়েছে।")
 
 def edit_telegram_message(chat_id, message_id, new_text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageText"
-    payload = {"chat_id": chat_id, "message_id": message_id, "text": new_text, "parse_mode": "Markdown"}
+    payload = {"chat_id": chat_id, "message_id": message_id, "text": new_text}
     requests.post(url, json=payload)
 
 def send_telegram_message(message_text):
