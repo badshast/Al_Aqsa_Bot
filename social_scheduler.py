@@ -1,18 +1,22 @@
 import os
 import requests
 import time
-from groq import Groq
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 import pymongo
 from bson.objectid import ObjectId
 
 load_dotenv()
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+# 1. Configure Gemini AI for Posts
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+else:
+    gemini_client = None
 
 MONGO_URI = os.getenv("MONGO_URI")
-# এখানে নতুন টোকেনটি ব্যবহার করা হচ্ছে
 POST_ACCESS_TOKEN = os.getenv("POST_ACCESS_TOKEN") 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
@@ -26,20 +30,29 @@ else:
     pending_posts_col = None
 
 def generate_post_for_approval():
-    """এআই দিয়ে পোস্ট তৈরি করে টেলিগ্রামে পাঠাবে"""
-    if not groq_client or pending_posts_col is None:
-        send_telegram_message("❌ Groq বা MongoDB কানেক্টেড নেই।")
+    """Gemini AI দিয়ে পোস্ট তৈরি করে টেলিগ্রামে পাঠাবে"""
+    if not gemini_client or pending_posts_col is None:
+        send_telegram_message("❌ Gemini বা MongoDB কানেক্টেড নেই।")
         return
 
     try:
-        prompt = "তুমি আল আকসা কম্পিউটারের সেলস ম্যানেজার। ফেসবুক পেজের জন্য একটি আকর্ষণীয় পোস্ট লিখো। কম্পিউটার, গ্রাফিক ডিজাইন বা ফ্রিল্যান্সিং কোর্সের ওপর ২ প্যারাগ্রাফের পোস্ট হবে। সাথে ৫টি রিলেভেন্ট হ্যাশট্যাগ দাও। একদম প্রফেশনাল বাংলায় লিখবে।"
+        prompt = """তুমি আল আকসা কম্পিউটার (চকরিয়া, কক্সবাজার)-এর একজন প্রফেশনাল কন্টেন্ট রাইটার। 
+        ফেসবুক পেজের জন্য একটি অত্যন্ত আকর্ষণীয় এবং প্রফেশনাল পোস্ট লিখো। 
+        পোস্টের বিষয়বস্তু: কম্পিউটার অফিস অ্যাপ্লিকেশন, গ্রাফিক ডিজাইন বা ফ্রিল্যান্সিং কোর্সের যেকোনো একটি।
+        পোস্টে অবশ্যই থাকতে হবে:
+        ১. একটি আকর্ষণীয় হুক (প্রথম লাইন)।
+        ২. কোর্সের সুবিধা (বুলেট পয়েন্টে)।
+        ৩. একটি শক্তিশালী Call to Action (যেমন: আজই ভর্তি হোন, সিট সীমিত)।
+        ৪. ৫টি রিলেভেন্ট হ্যাশট্যাগ। 
+        ভাষা হবে একদম সাবলীল, উৎসাহব্যঞ্জক এবং প্রফেশনাল বাংলা।"""
         
-        response = groq_client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model="openai/gpt-oss-120b",
-            temperature=0.7
+        response = gemini_client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(temperature=0.8)
         )
-        post_text = response.choices[0].message.content.strip()
+        
+        post_text = response.text.strip()
         
         result = pending_posts_col.insert_one({"text": post_text, "status": "pending", "timestamp": time.time()})
         post_id = str(result.inserted_id)
@@ -47,7 +60,7 @@ def generate_post_for_approval():
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
             "chat_id": ADMIN_CHAT_ID,
-            "text": f"📝 **নতুন পোস্ট তৈরি হয়েছে (অ্যাপ্রুভাল দিন):**\n\n{post_text}",
+            "text": f"📝 **নতুন পোস্ট তৈরি হয়েছে (Gemini AI):**\n\n{post_text}",
             "parse_mode": "Markdown",
             "reply_markup": {
                 "inline_keyboard": [[
@@ -69,7 +82,6 @@ def approve_and_publish_post(post_id, chat_id, message_id):
         post_text = post["text"]
         url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
         
-        # এখানে POST_ACCESS_TOKEN ব্যবহার করা হচ্ছে
         payload = {"message": post_text, "access_token": POST_ACCESS_TOKEN}
         res = requests.post(url, json=payload)
         
