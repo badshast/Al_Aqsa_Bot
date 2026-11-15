@@ -4,23 +4,22 @@ import threading
 import time
 from flask import Flask, request
 import requests
-from PIL import Image, ImageDraw, ImageFont
 from dotenv import load_dotenv
 from gemini_brain import AlAqsaAssistant
 import pymongo
 
-# Load environment variables
+# --- নতুন ইমপোর্ট ---
+import social_scheduler 
+
 load_dotenv()
 
 app = Flask(__name__)
 import logging
 logging.basicConfig(level=logging.INFO)
-print('=== BOT STARTED === PAGE_TOKEN SET:', bool(os.getenv('PAGE_ACCESS_TOKEN')), 'VERIFY:', os.getenv('VERIFY_TOKEN'))
+print('=== BOT STARTED ===')
 
-# Initialize AI Brain
 ai_brain = AlAqsaAssistant()
 
-# MongoDB Connection
 MONGO_URI = os.getenv("MONGO_URI")
 if MONGO_URI:
     try:
@@ -31,11 +30,7 @@ if MONGO_URI:
     except Exception as e:
         print(f"❌ MONGODB CONNECTION ERROR: {e}")
         messages_col = None
-else:
-    messages_col = None
-    print("❌ MONGO_URI MISSING.")
 
-# Secure Tokens
 PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -43,7 +38,7 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 
 @app.route("/", methods=["GET"])
 def home():
-    return "✅ Al Aqsa Computer Master Automation & Full System is Running Live!"
+    return "✅ Al Aqsa Computer Master Automation is Running Live!"
 
 @app.route("/health", methods=["GET"])
 def health():
@@ -58,25 +53,21 @@ def terms_of_service():
     return "<h1>Terms of Service</h1><p>By using this bot, you agree to our terms.</p>"
 
 # ==========================================
-# ফেসবুক Webhook (মেসেজ রিসিভ করার জন্য)
+# ফেসবুক Webhook
 # ==========================================
 @app.route("/webhook", methods=["GET"])
 def verify_webhook():
     mode = request.args.get("hub.mode")
     token = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
-
     if mode and token:
         if mode == "subscribe" and token == VERIFY_TOKEN:
             return challenge, 200
-        else:
-            return "Verification failed", 403
-    return "Hello World", 200
+    return "Verification failed", 403
 
 @app.route("/webhook", methods=["POST"])
 def handle_webhook():
     data = request.get_json(force=True, silent=True) or {}
-    # ফেসবুককে সাথে সাথে ২০০ রেসপন্স দেওয়া (Threading)
     threading.Thread(target=process_webhook_data, args=(data,)).start()
     return "EVENT_RECEIVED", 200
 
@@ -84,98 +75,74 @@ def process_webhook_data(data):
     try:
         if data.get("object") == "page":
             for entry in data.get("entry", []):
-                
-                # A. Handle Messenger Inbox Messages
                 messaging_events = entry.get("messaging", [])
                 for event in messaging_events:
-                    if event.get("message", {}).get("is_echo"):
-                        continue
-
+                    if event.get("message", {}).get("is_echo"): continue
                     sender_id = event["sender"]["id"]
                     
-                    # ডুপ্লিকেট মেসেজ চেক (MongoDB)
                     mid = event.get("message", {}).get("mid")
                     if mid and messages_col is not None:
-                        if messages_col.find_one({"mid": mid}):
-                            print(f"Duplicate message ignored: {mid}")
-                            continue
-                        else:
-                            messages_col.insert_one({"mid": mid, "timestamp": time.time()})
+                        if messages_col.find_one({"mid": mid}): continue
+                        else: messages_col.insert_one({"mid": mid, "timestamp": time.time()})
 
                     if "message" in event and "text" in event["message"]:
-                        user_message = event["message"]["text"]
-                        process_facebook_text(sender_id, user_message)
-
-                # B. Handle Page Comments (Smart Lead Hunter)
-                changes = entry.get("changes", [])
-                for change in changes:
-                    if change.get("field") == "feed" and change.get("value", {}).get("item") == "comment":
-                        val = change["value"]
-                        if val.get("verb") == "add":
-                            commenter_id = val.get("from", {}).get("id")
-                            commenter_name = val.get("from", {}).get("name", "Student")
-                            if commenter_id != entry.get("id"): 
-                                ai_brain.sync_to_crm(commenter_id, name=commenter_name, status="Commented on Post")
-                                if not ai_brain.has_chatted_before(commenter_id):
-                                    outreach_msg = f"আসসালামু আলাইকুম {commenter_name} ভাইয়া! আল আকসা কম্পিউটার পেজে আপনার কমেন্টটি দেখলাম। আমাদের কোর্সে ভর্তি চলছে। আপনি কোন কোর্সটি সম্পর্কে জানতে চান?"
-                                    send_facebook_message(commenter_id, outreach_msg)
+                        process_facebook_text(sender_id, event["message"]["text"])
     except Exception as e:
         print(f"❌ THREAD ERROR: {e}")
 
 def process_facebook_text(sender_id, text):
     try:
         result = ai_brain.handle_message(sender_id, text, "Student")
-        print(f"🤖 AI REPLY GENERATED: {result['reply'][:50]}...")
         send_facebook_message(sender_id, result["reply"])
         
-        # ফোন নম্বর দিলে বা বার্গেনিং লিড হলে টেলিগ্রামে অ্যালার্ট
         if result.get("alert_admin") and result.get("alert_type") == "BARGAIN_LEAD":
-            send_telegram_bargain_alert(sender_id, result["phone"], result["course"], result["final_fee"])
+            social_scheduler.send_telegram_message(f"🚨 **নতুন লিড অ্যালার্ট!**\n\n📞 **নম্বর:** `{result['phone']}`\n📘 **কোর্স:** {result['course']}\n💬 শেষ দাম: **{result['final_fee']} টাকা**")
     except Exception as e:
-        print(f"❌ TEXT PROCESSING ERROR: {e}")
+        print(f"❌ TEXT ERROR: {e}")
 
 def send_facebook_message(recipient_id, message_text):
     url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
     payload = {"recipient": {"id": recipient_id}, "message": {"text": message_text}}
-    headers = {"Content-Type": "application/json"}
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        print(f"✅ FB API RESPONSE: {response.status_code}")
+        requests.post(url, json=payload, timeout=10)
     except Exception as e:
-        print(f"❌ FB API ERROR: {e}")
+        print(f"❌ FB MSG ERROR: {e}")
 
 # ==========================================
-# টেলিগ্রাম Webhook (কমান্ড ও অ্যাপ্রুভাল রিসিভ করার জন্য)
+# টেলিগ্রাম Webhook (social_scheduler কে কল করবে)
 # ==========================================
 @app.route("/telegram_webhook", methods=["POST"])
 def telegram_webhook():
     data = request.get_json(force=True, silent=True) or {}
     
-    # আমরা শুধু মেসেজ বা কলব্যাক কুয়েরি চেক করব
     if "message" in data:
         chat_id = data["message"]["chat"]["id"]
         text = data["message"].get("text", "")
         
-        # চেক করা: মেসেজটি কি আমাদের অ্যাডমিন পাঠিয়েছে?
         if str(chat_id) == str(ADMIN_CHAT_ID):
             if text == "/start":
-                send_telegram_message("আসসালামু আলাইকুম স্যার! আমি আল আকসা বট। এখন থেকে নতুন লিড বা পোস্টের আপডেট এখানে পাবেন।")
-            elif text == "/ping":
-                send_telegram_message("✅ আলহামদুলিল্লাহ, বট ঠিকমতো কাজ করছে।")
+                social_scheduler.send_telegram_message("আসসালামু আলাইকুম স্যার! নতুন পোস্ট তৈরি করতে `/newpost` কমান্ড দিন।")
+            elif text == "/newpost":
+                social_scheduler.send_telegram_message("⏳ স্যার, আমি এআই দিয়ে একটি নতুন পোস্ট তৈরি করছি...")
+                threading.Thread(target=social_scheduler.generate_post_for_approval).start()
+                
+    elif "callback_query" in data:
+        callback = data["callback_query"]
+        chat_id = callback["message"]["chat"]["id"]
+        message_id = callback["message"]["message_id"]
+        callback_data = callback["data"]
+        
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery", json={"callback_query_id": callback["id"]})
+        
+        if str(chat_id) == str(ADMIN_CHAT_ID):
+            if callback_data.startswith("approve_"):
+                post_id = callback_data.split("_")[1]
+                social_scheduler.approve_and_publish_post(post_id, chat_id, message_id)
+            elif callback_data.startswith("reject_"):
+                post_id = callback_data.split("_")[1]
+                social_scheduler.reject_post(post_id, chat_id, message_id)
                 
     return {"ok": True}, 200
-
-def send_telegram_message(message_text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": ADMIN_CHAT_ID, "text": message_text, "parse_mode": "Markdown"}
-    try:
-        requests.post(url, json=payload, timeout=5)
-    except Exception as e:
-        print(f"Telegram API Error: {e}")
-
-def send_telegram_bargain_alert(customer_id, phone, course, final_fee):
-    msg = f"🚨 **নতুন লিড অ্যালার্ট!**\n\n📞 **নম্বর:** `{phone}`\n📘 **কোর্স:** {course}\n💬 শেষ দাম: **{final_fee} টাকা**\n\nস্যার, কাস্টমারের সাথে কথা বলুন।"
-    send_telegram_message(msg)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
