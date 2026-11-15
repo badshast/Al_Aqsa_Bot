@@ -71,7 +71,7 @@ def process_webhook_data(data):
                         if messages_col is not None:
                             db.get_collection("customers").update_one(
                                 {"customer_id": str(customer_id)},
-                                {"$set": {"bot_paused_until": time.time() + 900}} # ৯০০ সেকেন্ড = ১৫ মিনিট
+                                {"$set": {"bot_paused_until": time.time() + 300}} # ৩০০ সেকেন্ড = ৫ মিনিট
                             )
                             print(f"🤫 স্যার রিপ্লাই দিয়েছেন। কাস্টমার {customer_id}-এর জন্য বট ১৫ মিনিট বন্ধ থাকবে।")
                         continue
