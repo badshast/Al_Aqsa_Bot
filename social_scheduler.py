@@ -9,10 +9,7 @@ from bson.objectid import ObjectId
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-if GROQ_API_KEY:
-    groq_client = Groq(api_key=GROQ_API_KEY)
-else:
-    groq_client = None
+groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 MONGO_URI = os.getenv("MONGO_URI")
 POST_ACCESS_TOKEN = os.getenv("POST_ACCESS_TOKEN") 
@@ -28,7 +25,6 @@ else:
     pending_posts_col = None
 
 def generate_post_for_approval():
-    """শুধু টেক্সট পোস্ট তৈরি করে"""
     if not groq_client or pending_posts_col is None:
         send_telegram_message("❌ Groq বা MongoDB কানেক্টেড নেই।")
         return
@@ -48,19 +44,13 @@ def generate_post_for_approval():
         payload = {
             "chat_id": ADMIN_CHAT_ID,
             "text": f"📝 নতুন টেক্সট পোস্ট:\n\n{post_text}",
-            "reply_markup": {
-                "inline_keyboard": [[
-                    {"text": "Approve ✅", "callback_data": f"approve_{post_id}"},
-                    {"text": "Reject ❌", "callback_data": f"reject_{post_id}"}
-                ]]
-            }
+            "reply_markup": {"inline_keyboard": [[{"text": "Approve ✅", "callback_data": f"approve_{post_id}"}, {"text": "Reject ❌", "callback_data": f"reject_{post_id}"}]]}
         }
         requests.post(url, json=payload)
     except Exception as e:
-        send_telegram_message(f"❌ পোস্ট তৈরি করতে সমস্যা হয়েছে: {e}")
+        send_telegram_message(f"❌ পোস্ট তৈরি করতে সমস্যা: {e}")
 
 def handle_telegram_photo(photo_file_id):
-    """টেলিগ্রামে ছবি পাঠালে এআই ক্যাপশন লিখে অ্যাপ্রুভালের জন্য পাঠাবে"""
     if not groq_client or pending_posts_col is None: return
     try:
         prompt = "তুমি আল আকসা কম্পিউটারের সেলস ম্যানেজার। এই ছবির সাথে ফেসবুকের জন্য একটি আকর্ষণীয় ক্যাপশন লিখো। ছবিটি আল আকসা কম্পিউটারের একটি ডিজাইন। ২ প্যারাগ্রাফের পোস্ট হবে। সাথে ৫টি রিলেভেন্ট হ্যাশট্যাগ দাও। প্রফেশনাল বাংলায় লিখবে।"
@@ -71,31 +61,17 @@ def handle_telegram_photo(photo_file_id):
         )
         caption = response.choices[0].message.content.strip()
         
-        # ডাটাবেসে ছবির file_id এবং ক্যাপশন সেভ করা
-        result = pending_posts_col.insert_one({
-            "file_id": photo_file_id, 
-            "text": caption, 
-            "type": "photo", 
-            "status": "pending", 
-            "timestamp": time.time()
-        })
+        result = pending_posts_col.insert_one({"file_id": photo_file_id, "text": caption, "type": "photo", "status": "pending", "timestamp": time.time()})
         post_id = str(result.inserted_id)
         
-        # টেলিগ্রামে ছবিসহ অ্যাপ্রুভাল বাটন পাঠানো
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
         payload = {
             "chat_id": ADMIN_CHAT_ID,
             "photo": photo_file_id,
-            "caption": caption[:1000], # টেলিগ্রাম ক্যাপশনে ১০২৪ অক্ষরের লিমিট থাকে
-            "reply_markup": {
-                "inline_keyboard": [[
-                    {"text": "Approve ✅", "callback_data": f"approve_{post_id}"},
-                    {"text": "Reject ❌", "callback_data": f"reject_{post_id}"}
-                ]]
-            }
+            "caption": caption[:1000],
+            "reply_markup": {"inline_keyboard": [[{"text": "Approve ✅", "callback_data": f"approve_{post_id}"}, {"text": "Reject ❌", "callback_data": f"reject_{post_id}"}]]}
         }
         requests.post(url, json=payload)
-        
     except Exception as e:
         send_telegram_message(f"❌ ছবির ক্যাপশন তৈরি করতে সমস্যা: {e}")
 
@@ -107,29 +83,38 @@ def approve_and_publish_post(post_id, chat_id, message_id):
         post_text = post["text"]
         
         if post["type"] == "photo":
-            # ১. টেলিগ্রাম থেকে ছবিটি ডাউনলোড করা
             file_id = post["file_id"]
             file_res = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}").json()
+            
+            if "result" not in file_res:
+                send_telegram_message("❌ টেলিগ্রাম থেকে ফাইলটি ডাউনলোড করা যাচ্ছে না।")
+                return
+                
             file_path = file_res['result']['file_path']
             img_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
             img_bytes = requests.get(img_url).content
             
-            # ২. ফেসবুকে ছবিসহ পোস্ট করা
             url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/photos"
             payload = {"message": post_text, "access_token": POST_ACCESS_TOKEN}
             files = {"source": ("image.jpg", img_bytes)}
+            
+            print(">>> POSTING PHOTO TO FACEBOOK <<<")
             res = requests.post(url, data=payload, files=files)
+            print(f">>> FB PHOTO RESPONSE: {res.status_code} - {res.text}")
+            
         else:
-            # শুধু টেক্সট পোস্ট
             url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
             payload = {"message": post_text, "access_token": POST_ACCESS_TOKEN}
+            
+            print(">>> POSTING TEXT TO FACEBOOK <<<")
             res = requests.post(url, json=payload)
+            print(f">>> FB TEXT RESPONSE: {res.status_code} - {res.text}")
         
         if res.status_code == 200:
             pending_posts_col.update_one({"_id": ObjectId(post_id)}, {"$set": {"status": "approved"}})
             edit_telegram_message(chat_id, message_id, f"✅ পোস্ট সফলভাবে ফেসবুকে পাবলিশ হয়েছে!")
         else:
-            send_telegram_message(f"❌ ফেসবুকে পোস্ট করতে সমস্যা: {res.text}")
+            send_telegram_message(f"❌ ফেসবুক এরর: {res.text}")
 
 def reject_post(post_id, chat_id, message_id):
     if pending_posts_col is None: return
