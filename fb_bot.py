@@ -64,9 +64,21 @@ def process_webhook_data(data):
             for entry in data.get("entry", []):
                 messaging_events = entry.get("messaging", [])
                 for event in messaging_events:
-                    if event.get("message", {}).get("is_echo"): continue
+                    
+                    # স্যার (অ্যাডমিন) রিপ্লাই দিলে বট ১৫ মিনিটের জন্য চুপ হয়ে যাবে
+                    if event.get("message", {}).get("is_echo"):
+                        customer_id = event["recipient"]["id"]
+                        if messages_col is not None:
+                            db.get_collection("customers").update_one(
+                                {"customer_id": str(customer_id)},
+                                {"$set": {"bot_paused_until": time.time() + 900}} # ৯০০ সেকেন্ড = ১৫ মিনিট
+                            )
+                            print(f"🤫 স্যার রিপ্লাই দিয়েছেন। কাস্টমার {customer_id}-এর জন্য বট ১৫ মিনিট বন্ধ থাকবে।")
+                        continue
+
                     sender_id = event["sender"]["id"]
                     
+                    # ডুপ্লিকেট মেসেজ চেক
                     mid = event.get("message", {}).get("mid")
                     if mid and messages_col is not None:
                         if messages_col.find_one({"mid": mid}): continue
@@ -74,19 +86,48 @@ def process_webhook_data(data):
 
                     if "message" in event and "text" in event["message"]:
                         process_facebook_text(sender_id, event["message"]["text"])
+                    
+                    # ভয়েস মেসেজ হ্যান্ডেল করা
+                    elif "message" in event and "attachments" in event["message"]:
+                        for attachment in event["message"]["attachments"]:
+                            if attachment.get("type") == "audio":
+                                audio_url = attachment["payload"]["url"]
+                                process_facebook_audio(sender_id, audio_url)
     except Exception as e:
         print(f"❌ THREAD ERROR: {e}")
 
 def process_facebook_text(sender_id, text):
     try:
         result = ai_brain.handle_message(sender_id, text, "Student")
-        send_facebook_message(sender_id, result["reply"])
         
-        if result.get("alert_admin") and result.get("alert_type") == "BARGAIN_LEAD":
-            msg = f"🚨 **নতুন লিড অ্যালার্ট!**\n\n📞 **নম্বর:** `{result['phone']}`\n📘 **কোর্স:** {result['course']}\n💬 শেষ দাম: **{result['final_fee']} টাকা**"
-            social_scheduler.send_telegram_message(msg)
+        # রিপ্লাই যদি None হয় (মানে বট পজ করা আছে), তবে কিছু পাঠাবে না
+        if result.get("reply") is not None:
+            send_facebook_message(sender_id, result["reply"])
+            
+            if result.get("alert_admin") and result.get("alert_type") == "BARGAIN_LEAD":
+                msg = f"🚨 **নতুন লিড অ্যালার্ট!**\n\n📞 **নম্বর:** `{result['phone']}`\n📘 **কোর্স:** {result['course']}\n💬 শেষ দাম: **{result['final_fee']} টাকা**"
+                social_scheduler.send_telegram_message(msg)
     except Exception as e:
         print(f"❌ TEXT ERROR: {e}")
+
+def process_facebook_audio(sender_id, audio_url):
+    try:
+        # ১. অডিও ডাউনলোড করা
+        audio_data = requests.get(audio_url).content
+        
+        # ২. Groq Whisper দিয়ে টেক্সটে রূপান্তর করা
+        print(">>> TRANSCRIBING AUDIO <<<")
+        transcript = ai_brain.transcribe_audio(audio_data, mime_type="audio/mp4")
+        
+        if transcript:
+            print(f">>> TRANSCRIPTION SUCCESS: {transcript[:50]}...")
+            # ৩. ট্রান্সক্রাইব করা টেক্সট দিয়ে মেসেজ প্রসেস করা
+            process_facebook_text(sender_id, transcript)
+        else:
+            send_facebook_message(sender_id, "ভাইয়া, আপনার ভয়েস মেসেজটি স্পষ্ট বোঝা যায়নি। অনুগ্রহ করে একটু লিখে বলবেন?")
+    except Exception as e:
+        print(f"❌ AUDIO ERROR: {e}")
+        send_facebook_message(sender_id, "ভয়েস প্রসেস করতে সমস্যা হচ্ছে। একটু লিখে বলবেন?")
 
 def send_facebook_message(recipient_id, message_text):
     url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
@@ -111,19 +152,16 @@ def telegram_webhook():
                 social_scheduler.send_telegram_message("⏳ স্যার, আমি এআই দিয়ে পোস্ট তৈরি করছি...")
                 threading.Thread(target=social_scheduler.generate_post_for_approval).start()
             
-            # ছবি রিসিভ
             elif "photo" in data["message"]:
                 photo_file_id = data["message"]["photo"][-1]["file_id"]
                 social_scheduler.send_telegram_message("⏳ স্যার, ছবিটি পেয়েছি...")
                 threading.Thread(target=social_scheduler.handle_telegram_photo, args=(photo_file_id,)).start()
             
-            # ভিডিও রিসিভ
             elif "video" in data["message"]:
                 video_file_id = data["message"]["video"]["file_id"]
                 social_scheduler.send_telegram_message("⏳ স্যার, ভিডিওটি পেয়েছি...")
                 threading.Thread(target=social_scheduler.handle_telegram_video, args=(video_file_id,)).start()
             
-            # ডকুমেন্ট রিসিভ (ছবি বা ভিডিও)
             elif "document" in data["message"]:
                 doc = data["message"]["document"]
                 mime = doc.get("mime_type", "")
@@ -140,13 +178,11 @@ def telegram_webhook():
         message_id = callback["message"]["message_id"]
         callback_data = callback["data"]
         
-        # টেলিগ্রামের লোডিং স্পিনার বন্ধ করা
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery", json={"callback_query_id": callback["id"]})
         
         if str(chat_id) == str(ADMIN_CHAT_ID):
             if callback_data.startswith("approve_"):
                 post_id = callback_data.split("_")[1]
-                # বাটন লুকানো (যাতে দ্বিতীয়বার ক্লিক না হয়)
                 social_scheduler.remove_telegram_buttons(chat_id, message_id)
                 threading.Thread(target=social_scheduler.approve_and_publish_post, args=(post_id, chat_id, message_id)).start()
             elif callback_data.startswith("reject_"):
