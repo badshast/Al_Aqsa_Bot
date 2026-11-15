@@ -68,7 +68,7 @@ class AlAqsaAssistant:
         self.user_state = {}
 
     def sync_to_crm(self, customer_id, **kwargs):
-        if not customers_col: return
+                if customers_col is None: return
         kwargs["last_updated"] = time.time()
         customers_col.update_one(
             {"customer_id": str(customer_id)},
