@@ -9,10 +9,13 @@ from bson.objectid import ObjectId
 
 load_dotenv()
 
-# 1. Configure Gemini AI for Posts
+# 1. Configure Gemini AI (With 15 seconds timeout to prevent hanging)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
-    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+    gemini_client = genai.Client(
+        api_key=GEMINI_API_KEY,
+        http_options={'timeout': 15000} # ১৫ সেকেন্ড পর বন্ধ হয়ে যাবে
+    )
 else:
     gemini_client = None
 
@@ -31,6 +34,7 @@ else:
 
 def generate_post_for_approval():
     """Gemini AI দিয়ে পোস্ট তৈরি করে টেলিগ্রামে পাঠাবে"""
+    print(">>> POST GENERATION STARTED <<<")
     if not gemini_client or pending_posts_col is None:
         send_telegram_message("❌ Gemini বা MongoDB কানেক্টেড নেই।")
         return
@@ -46,22 +50,24 @@ def generate_post_for_approval():
         ৪. ৫টি রিলেভেন্ট হ্যাশট্যাগ। 
         ভাষা হবে একদম সাবলীল, উৎসাহব্যঞ্জক এবং প্রফেশনাল বাংলা।"""
         
+        print(">>> CALLING GEMINI API <<<")
         response = gemini_client.models.generate_content(
-            model='gemini-3.8-flash', 
+            model='gemini-2.0-flash', # যদি এরর দেয় তবে 'gemini-1.5-flash-latest' করে দেখবেন
             contents=prompt,
             config=types.GenerateContentConfig(temperature=0.8)
         )
         
         post_text = response.text.strip()
+        print(f">>> GEMINI REPLIED: {post_text[:50]}... <<<")
         
         result = pending_posts_col.insert_one({"text": post_text, "status": "pending", "timestamp": time.time()})
         post_id = str(result.inserted_id)
         
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        
         payload = {
             "chat_id": ADMIN_CHAT_ID,
-            "text": f"📝 **নতুন পোস্ট তৈরি হয়েছে (Gemini AI):**\n\n{post_text}",
-            "parse_mode": "Markdown",
+            "text": f"📝 নতুন পোস্ট তৈরি হয়েছে (Gemini AI):\n\n{post_text}",
             "reply_markup": {
                 "inline_keyboard": [[
                     {"text": "Approve ✅", "callback_data": f"approve_{post_id}"},
@@ -69,19 +75,22 @@ def generate_post_for_approval():
                 ]]
             }
         }
-        requests.post(url, json=payload)
+        
+        print(">>> SENDING TO TELEGRAM <<<")
+        tg_res = requests.post(url, json=payload)
+        print(f">>> TELEGRAM RESPONSE: {tg_res.status_code} - {tg_res.text} <<<")
+        
     except Exception as e:
+        print(f"❌ ERROR IN GENERATION: {e}")
         send_telegram_message(f"❌ পোস্ট তৈরি করতে সমস্যা হয়েছে: {e}")
 
 def approve_and_publish_post(post_id, chat_id, message_id):
-    """Approve করলে ফেসবুকে পোস্ট করবে"""
     if pending_posts_col is None: return
     post = pending_posts_col.find_one({"_id": ObjectId(post_id)})
     
     if post and post["status"] == "pending":
         post_text = post["text"]
         url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
-        
         payload = {"message": post_text, "access_token": POST_ACCESS_TOKEN}
         res = requests.post(url, json=payload)
         
@@ -103,5 +112,5 @@ def edit_telegram_message(chat_id, message_id, new_text):
 
 def send_telegram_message(message_text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": ADMIN_CHAT_ID, "text": message_text, "parse_mode": "Markdown"}
+    payload = {"chat_id": ADMIN_CHAT_ID, "text": message_text}
     requests.post(url, json=payload)
