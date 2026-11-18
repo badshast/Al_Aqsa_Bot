@@ -24,12 +24,50 @@ if MONGO_URI:
 else:
     pending_posts_col = None
 
+# ==========================================
+# ১. অটো-পোস্ট জেনারেটর (সিরিয়াল ওয়ার্কফ্লো সহ)
+# ==========================================
 def generate_post_for_approval():
     if not groq_client or pending_posts_col is None:
         send_telegram_message("❌ Groq বা MongoDB কানেক্টেড নেই।")
         return
     try:
-        prompt = "তুমি আল আকসা কম্পিউটারের সেলস ম্যানেজার। ফেসবুক পেজের জন্য একটি আকর্ষণীয় পোস্ট লিখো। কম্পিউটার, গ্রাফিক ডিজাইন বা ফ্রিল্যান্সিং কোর্সের ওপর ২ প্যারাগ্রাফের পোস্ট হবে। সাথে ৫টি রিলেভেন্ট হ্যাশট্যাগ দাও। একদম প্রফেশনাল বাংলায় লিখবে।"
+        # কন্টেন্ট সিরিজ (আপনি চাইলে এখানে আরও টপিক যোগ করতে পারেন)
+        content_series = [
+            "MS Word কি এবং কেন শিখবেন? (বেসিক ধারণা)",
+            "MS Word-এর ৫টি দরকারি শর্টকাট (Ctrl+B, Ctrl+I ইত্যাদি)",
+            "MS Word-এ পেজ সেটআপ ও প্রিন্ট করার নিয়ম",
+            "Excel কি এবং কেন দরকার? (বেসিক ধারণা)",
+            "Excel-এ যোগ, বিয়োগ, গুণ ও ভাগ করার ফর্মুলা",
+            "Excel-এর ৫টি দরকারি শর্টকাট (Ctrl+C, Ctrl+V, Ctrl+Z ইত্যাদি)",
+            "ফ্রিল্যান্সিং শুরু করার প্রথম ধাপ কি?",
+            "ফ্রিল্যান্সিংয়ে সফল হওয়ার ৩টি টিপস",
+            "কম্পিউটার স্লো হলে কী করবেন?",
+            "সাইবার সিকিউরিটি: পাসওয়ার্ড কতদিন পর পর পরিবর্তন করবেন?"
+        ]
+
+        # ডাটাবেস থেকে চেক করা সর্বশেষ কোন টপিক পোস্ট হয়েছে
+        last_post = pending_posts_col.find_one({"type": "text", "status": "approved"}, sort=[("timestamp", -1)])
+        
+        next_index = 0
+        if last_post and "topic" in last_post:
+            last_topic = last_post["topic"]
+            if last_topic in content_series:
+                last_index = content_series.index(last_topic)
+                next_index = (last_index + 1) % len(content_series) # শেষ হয়ে গেলে আবার শুরু থেকে
+        
+        selected_topic = content_series[next_index]
+        print(f">>> AUTO GENERATING TOPIC: {selected_topic} <<<")
+
+        prompt = f"""তুমি আল আকসা কম্পিউটারের সেলস ম্যানেজার। ফেসবুক পেজের জন্য একটি আকর্ষণীয় পোস্ট লিখো। 
+        আজকের টপিক: {selected_topic}
+        পোস্টের নিয়ম:
+        ১. একটি আকর্ষণীয় হুক (প্রথম লাইন)।
+        ২. ২ প্যারাগ্রাফের বিস্তারিত (যাতে কাস্টমার আগ্রহী হয়)।
+        ৩. একটি শক্তিশালী Call to Action (যেমন: আজই ভর্তি হোন বা আমাদের ইনবক্স করুন)।
+        ৪. ৫টি রিলেভেন্ট হ্যাশট্যাগ। 
+        ভাষা হবে একদম প্রফেশনাল ও সাবলীল বাংলা।"""
+        
         response = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
             model="openai/gpt-oss-120b",
@@ -37,19 +75,29 @@ def generate_post_for_approval():
         )
         post_text = response.choices[0].message.content.strip()
         
-        result = pending_posts_col.insert_one({"text": post_text, "type": "text", "status": "pending", "timestamp": time.time()})
+        # ডাটাবেসে সেভ করা (টপিকের নাম সহ)
+        result = pending_posts_col.insert_one({
+            "text": post_text, 
+            "topic": selected_topic, 
+            "type": "text", 
+            "status": "pending", 
+            "timestamp": time.time()
+        })
         post_id = str(result.inserted_id)
         
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
             "chat_id": ADMIN_CHAT_ID,
-            "text": f"📝 নতুন টেক্সট পোস্ট:\n\n{post_text}",
+            "text": f"📝 নতুন পোস্ট (টপিক: {selected_topic}):\n\n{post_text}",
             "reply_markup": {"inline_keyboard": [[{"text": "Approve ✅", "callback_data": f"approve_{post_id}"}, {"text": "Reject ❌", "callback_data": f"reject_{post_id}"}]]}
         }
         requests.post(url, json=payload)
     except Exception as e:
         send_telegram_message(f"❌ পোস্ট তৈরি করতে সমস্যা: {e}")
 
+# ==========================================
+# ২. ছবি রিসিভ করলে ক্যাপশন তৈরি
+# ==========================================
 def handle_telegram_photo(photo_file_id):
     if not groq_client or pending_posts_col is None: return
     try:
@@ -75,6 +123,9 @@ def handle_telegram_photo(photo_file_id):
     except Exception as e:
         send_telegram_message(f"❌ ছবির ক্যাপশন তৈরি করতে সমস্যা: {e}")
 
+# ==========================================
+# ৩. ভিডিও রিসিভ করলে ক্যাপশন তৈরি
+# ==========================================
 def handle_telegram_video(video_file_id):
     if not groq_client or pending_posts_col is None: return
     try:
@@ -100,12 +151,17 @@ def handle_telegram_video(video_file_id):
     except Exception as e:
         send_telegram_message(f"❌ ভিডিওর ক্যাপশন তৈরি করতে সমস্যা: {e}")
 
+# ==========================================
+# ৪. টেলিগ্রামের বাটন রিমুভার
+# ==========================================
 def remove_telegram_buttons(chat_id, message_id):
-    """টেলিগ্রাম থেকে বাটন সরিয়ে দেওয়া, যাতে দ্বিতীয়বার ক্লিক না করা যায়"""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageReplyMarkup"
     payload = {"chat_id": chat_id, "message_id": message_id}
     requests.post(url, json=payload)
 
+# ==========================================
+# ৫. Approve করলে ফেসবুকে পাবলিশ
+# ==========================================
 def approve_and_publish_post(post_id, chat_id, message_id):
     if pending_posts_col is None: return
     
@@ -165,11 +221,17 @@ def approve_and_publish_post(post_id, chat_id, message_id):
             pending_posts_col.update_one({"_id": ObjectId(post_id)}, {"$set": {"status": "failed"}})
             send_telegram_message(f"❌ কোডের ভেতরে এরর: {e}")
 
+# ==========================================
+# ৬. Reject করলে পোস্ট বাতিল
+# ==========================================
 def reject_post(post_id, chat_id, message_id):
     if pending_posts_col is None: return
     pending_posts_col.update_one({"_id": ObjectId(post_id)}, {"$set": {"status": "rejected"}})
     send_telegram_message("❌ পোস্টটি বাতিল করা হয়েছে।")
 
+# ==========================================
+# ৭. টেলিগ্রামে মেসেজ পাঠানোর সাধারণ ফাংশন
+# ==========================================
 def send_telegram_message(message_text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": ADMIN_CHAT_ID, "text": message_text, "parse_mode": "Markdown"}
