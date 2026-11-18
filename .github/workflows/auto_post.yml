@@ -1,0 +1,16 @@
+name: Auto Post Generator
+
+on:
+  schedule:
+    # দিনে ৪ বার পোস্ট হবে: সকাল ১০টা, দুপুর ২টা, বিকাল ৫টা, রাত ৮টা (বাংলাদেশ সময়)
+    # UTC হিসাব: 4 AM, 8 AM, 11 AM, 2 PM
+    - cron: '0 4,8,11,14 * * *'
+  workflow_dispatch: # আপনি চাইলে গিটহাব থেকে ম্যানুয়ালিও রান করতে পারবেন
+
+jobs:
+  trigger-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render Server to Generate Post
+        run: |
+          curl -X POST https://al-aqsa-bot.onrender.com/trigger-post
